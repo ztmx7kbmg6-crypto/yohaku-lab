@@ -1,0 +1,11 @@
+node_modules/
+.state/
+.auth/
+.env*
+!.env.example
+.dev.vars
+artifacts/
+dist/
+test-results/
+playwright-report/
+.wrangler/
