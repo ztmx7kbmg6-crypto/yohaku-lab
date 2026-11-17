@@ -12,6 +12,7 @@ async function request(path,data){const r=await fetch(base+'/api'+path,{method:d
 async function action(fn){if(busy)return;busy=true;try{await fn()}catch(e){toast(e.message)}finally{busy=false}}
 async function refresh(){state=await request('/state');$('#login').hidden=true;$('#workspace').hidden=false;$('#pause').hidden=false;render();}
 function render(){
+ if(state.liveEnabled){$('.safety strong').textContent='公開モード：最終版の公開許可がある記事のみ';$('.safety p').textContent='本文の承認とnote公開許可の両方が必要です。取得済みの処理は停止操作後も完了する場合があります。';}
  $('#connection').textContent=config.local?'このMacに接続':'管理者として接続';$('#paused-label').textContent=state.settings.paused?'処理停止中':'入力テスト稼働中';$('#pause').textContent=state.settings.paused?'テスト処理を再開':'すべて停止';
  $('#today').textContent=new Date().toLocaleDateString('ja-JP',{timeZone:'Asia/Tokyo',year:'numeric',month:'long',day:'numeric',weekday:'long'})+' ｜ あなたのための編集室';
  const filtered=state.articles.filter(a=>$('#filter').value==='all'||a.status===$('#filter').value);$('#count').textContent=`${filtered.length} 本`;
