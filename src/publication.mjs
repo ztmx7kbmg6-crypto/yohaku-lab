@@ -16,9 +16,9 @@ export class Publication {
  requireThat(typeof input.noteKey==='string'&&/^n[a-z0-9]+$/.test(input.noteKey),'note下書きIDが不正です',400);
  const nonce=crypto.randomUUID(),at=now(),expires=new Date(Date.now()+10000).toISOString();
  const rows=await this.store.all(`INSERT INTO publication_attempts(article_id,revision,hash,note_key,nonce,stage,started_at,expires_at)
- SELECT a.id,a.revision,a.hash,?,?, 'armed',?,? FROM articles a JOIN publication_permissions p ON p.article_id=a.id AND p.revision=a.revision AND p.hash=a.hash
+ SELECT a.id,a.revision,a.hash,?,?, 'armed',?,? FROM articles a JOIN publication_permissions p ON p.article_id=a.id AND p.revision=a.revision AND p.hash=a.hash JOIN note_drafts d ON d.article_id=a.id AND d.hash=a.hash AND d.revision=a.revision AND d.note_key=?
  WHERE a.id=? AND a.revision=? AND a.hash=? AND a.status='preparing' AND a.lease=? AND a.lease_until>? AND a.approved_hash=a.hash AND a.approved_revision=a.revision AND (SELECT paused FROM settings WHERE id=1)=0
- AND NOT EXISTS(SELECT 1 FROM publication_attempts WHERE article_id=a.id OR hash=a.hash OR note_key=?) RETURNING nonce`,[input.noteKey,nonce,at,expires,id,input.revision,input.hash,input.lease,at,input.noteKey]);
+ AND NOT EXISTS(SELECT 1 FROM publication_attempts WHERE article_id=a.id OR hash=a.hash OR note_key=?) RETURNING nonce`,[input.noteKey,nonce,at,expires,input.noteKey,id,input.revision,input.hash,input.lease,at,input.noteKey]);
  requireThat(rows.length===1,'公開承認・停止状態・ロック・重複を確認してください');return {nonce,expiresAt:expires,expectedUrl:'https://note.com/firm_orchid8992/n/'+input.noteKey};
  }
  async attempt(id,input){

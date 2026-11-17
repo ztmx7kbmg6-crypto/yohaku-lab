@@ -51,3 +51,11 @@ CREATE TRIGGER IF NOT EXISTS invalidate_publication_permission AFTER UPDATE ON a
 CREATE TABLE IF NOT EXISTS passkeys(id TEXT PRIMARY KEY,public_key TEXT NOT NULL,counter INTEGER NOT NULL,transports TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS auth_challenges(id TEXT PRIMARY KEY,challenge TEXT NOT NULL,kind TEXT NOT NULL,expires_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS auth_rate(bucket TEXT PRIMARY KEY,count INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS note_drafts(article_id TEXT PRIMARY KEY REFERENCES articles(id),revision INTEGER NOT NULL,hash TEXT NOT NULL,note_key TEXT NOT NULL UNIQUE,linked_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS publication_attempt_history(nonce TEXT PRIMARY KEY,article_id TEXT NOT NULL,revision INTEGER NOT NULL,hash TEXT NOT NULL,note_key TEXT NOT NULL,stage TEXT NOT NULL,started_at TEXT NOT NULL,resolved_at TEXT NOT NULL,resolution TEXT NOT NULL);
+CREATE TRIGGER IF NOT EXISTS archive_recovered_publication AFTER UPDATE ON articles WHEN NEW.actor='owner' AND NEW.status='draft' AND OLD.status IN('uncertain','failed','prepared') AND OLD.revision=NEW.revision AND OLD.hash=NEW.hash BEGIN
+INSERT INTO publication_attempt_history SELECT nonce,article_id,revision,hash,note_key,stage,started_at,strftime('%Y-%m-%dT%H:%M:%fZ','now'),'owner-confirmed-not-published' FROM publication_attempts WHERE article_id=NEW.id;
+DELETE FROM publication_attempts WHERE article_id=NEW.id;
+END;
+CREATE TRIGGER IF NOT EXISTS no_attempt_history_update BEFORE UPDATE ON publication_attempt_history BEGIN SELECT RAISE(ABORT,'attempt history immutable'); END;
+CREATE TRIGGER IF NOT EXISTS no_attempt_history_delete BEFORE DELETE ON publication_attempt_history BEGIN SELECT RAISE(ABORT,'attempt history immutable'); END;

@@ -53,9 +53,9 @@ try{
   try{
    if(mode==='fixture'){await dryrun(article);await call('finish',{id:article.id,lease:article.lease,status:'prepared'});console.log('入力テスト完了。noteへの通信・公開なし。');}
    else{
-    context=await chromium.launchPersistentContext(resolve('.auth/note-profile'),{headless:true,channel:process.env.BROWSER_CHANNEL||'chrome'});
+    context=await chromium.launchPersistentContext(resolve('.auth/note-profile'),{headless:false,channel:process.env.BROWSER_CHANNEL||'chrome'});
     const page=await context.newPage(),dir=resolve('artifacts',article.id+'-r'+article.revision);await mkdir(dir,{recursive:true,mode:0o700});
-    const receipt=await prepareNote(page,article,{onDraft:async noteKey=>writeFile(resolve(dir,'note-draft.json'),JSON.stringify({noteKey,id:article.id,revision:article.revision,hash:article.hash}),{mode:0o600})});
+    const receipt=await prepareNote(page,article,{onDraft:async noteKey=>{await writeFile(resolve(dir,'note-draft.json'),JSON.stringify({noteKey,id:article.id,revision:article.revision,hash:article.hash}),{mode:0o600});await call('draft-linked',{id:article.id,lease:article.lease,noteKey});}});
     await page.screenshot({path:resolve(dir,'note-before-publish.png'),fullPage:true});await writeFile(resolve(dir,'note-prepared.json'),JSON.stringify(receipt,null,2),{mode:0o600});
     if(mode==='note-live'){publishing=true;const published=await publishPrepared(page,article,receipt,call);console.log('公開結果:',published.url);}
     else{await call('finish',{id:article.id,lease:article.lease,status:'prepared'});console.log('実noteの公開直前まで確認しました。公開していません。');}

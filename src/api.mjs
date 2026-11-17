@@ -53,8 +53,11 @@ export async function api(req,env){
  if(machine){
  if(path==='/api/machine/heartbeat'){await store.run('UPDATE settings SET heartbeat=? WHERE id=1',[new Date().toISOString()]);result={ok:true};}
  else if(path==='/api/machine/claim')result=await store.claim();
+ else if(path==='/api/machine/draft-linked')result=await store.linkDraft(input.id,input);
  else if(path==='/api/machine/finish')result=await store.finish(input.id,input);
  else if(/^\/api\/machine\/publication\/(begin|attempt|confirm|uncertain)$/.test(path))result=await publication[path.split('/').at(-1)](input.id,input);
+ else if(path==='/api/machine/revision-work'){const articles=await store.all("SELECT * FROM articles WHERE status='revision_requested' ORDER BY updated_at LIMIT 6");result=[];for(const a of articles)result.push({article:a,comments:await store.all('SELECT revision,body,created_at FROM comments WHERE article_id=? ORDER BY id',[a.id])});}
+ else if(path==='/api/machine/revise-requested')result=await store.edit(input.id,input,'generator','revision_requested');
  else if(path==='/api/machine/import')result=input.id?await store.edit(input.id,input,'generator'):await store.create(input,'generator');
  else if(path==='/api/machine/notifications')result={events:await store.all('SELECT * FROM notifications WHERE delivered=0 AND attempts<5 ORDER BY id LIMIT 20'),subscriptions:await store.all('SELECT payload FROM subscriptions')};
  else if(path==='/api/machine/notification-result'){

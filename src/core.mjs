@@ -24,9 +24,9 @@ export class Store {
  const c=await content(input),id=crypto.randomUUID();
  await this.run('INSERT INTO articles(id,title,body,price,paywall,tags,hash,actor,updated_at) VALUES(?,?,?,?,?,?,?,?,?)',[id,c.title,c.body,c.price,c.paywall,JSON.stringify(c.tags),c.hash,actor,now()]);return this.get(id);
  }
- async edit(id,input,actor='owner'){
+ async edit(id,input,actor='owner',expectedStatus=null){
  const c=await content(input);
- const rows=await this.all(`UPDATE articles SET title=?,body=?,price=?,paywall=?,tags=?,hash=?,revision=revision+1,status='draft',approved_hash=NULL,approved_revision=NULL,scheduled_at=NULL,error=NULL,actor=?,updated_at=? WHERE id=? AND revision=? AND status NOT IN ('preparing','uncertain','published') RETURNING id`,[c.title,c.body,c.price,c.paywall,JSON.stringify(c.tags),c.hash,actor,now(),id,input.revision]);
+ const rows=await this.all(`UPDATE articles SET title=?,body=?,price=?,paywall=?,tags=?,hash=?,revision=revision+1,status='draft',approved_hash=NULL,approved_revision=NULL,scheduled_at=NULL,error=NULL,actor=?,updated_at=? WHERE id=? AND revision=? AND status NOT IN ('preparing','uncertain','published') AND (? IS NULL OR status=?) RETURNING id`,[c.title,c.body,c.price,c.paywall,JSON.stringify(c.tags),c.hash,actor,now(),id,input.revision,expectedStatus,expectedStatus]);
  check(rows.length,'別の端末で更新されたか、処理中です。再読み込みしてください',409);return this.get(id);
  }
  async decide(id,input){
@@ -63,7 +63,7 @@ export class Store {
  }
  async cancel(id){const r=await this.all(`UPDATE articles SET status='approved',scheduled_at=NULL,actor='owner',updated_at=? WHERE id=? AND status='scheduled' RETURNING id`,[now(),id]);check(r.length,'予約を停止できません。処理状態を確認してください',409);return this.get(id);}
  async comment(id,input){const a=await this.get(id);check(input.revision===a.revision,'記事が更新されています',409);check(typeof input.body==='string'&&input.body.trim()&&input.body.length<=4000,'コメントは1〜4000文字です');await this.run('INSERT INTO comments(article_id,revision,body) VALUES(?,?,?)',[id,a.revision,input.body]);}
- async detail(id){return {article:await this.get(id),publication:await this.one('SELECT revision,hash,granted_at FROM publication_permissions WHERE article_id=?',[id]),comments:await this.all('SELECT * FROM comments WHERE article_id=? ORDER BY id',[id]),revisions:await this.all('SELECT * FROM revisions WHERE article_id=? ORDER BY revision DESC',[id])};}
+ async detail(id){return {article:await this.get(id),publication:await this.one('SELECT revision,hash,granted_at FROM publication_permissions WHERE article_id=?',[id]),noteDraft:await this.one('SELECT * FROM note_drafts WHERE article_id=?',[id]),comments:await this.all('SELECT * FROM comments WHERE article_id=? ORDER BY id',[id]),revisions:await this.all('SELECT * FROM revisions WHERE article_id=? ORDER BY revision DESC',[id])};}
  async pause(value){check(typeof value==='boolean','停止設定が不正です');await this.run('UPDATE settings SET paused=? WHERE id=1',[value?1:0]);}
  async claim(){
  await this.run('UPDATE settings SET heartbeat=? WHERE id=1',[now()]);
@@ -73,6 +73,10 @@ export class Store {
  const rows=await this.all(`UPDATE articles SET status='preparing',lease=?,lease_until=?,actor='agent',updated_at=? WHERE id=(SELECT id FROM articles WHERE status='scheduled' AND scheduled_at<=? AND scheduled_at>=? AND approved_hash=hash AND approved_revision=revision AND (SELECT paused FROM settings)=0 ORDER BY scheduled_at LIMIT 1) AND status='scheduled' RETURNING *`,[lease,new Date(Date.now()+300000).toISOString(),now(),now(),new Date(Date.now()-900000).toISOString()]);
  await this.run(`UPDATE articles SET status='failed',error='予定から15分以上経過したため自動処理を停止しました',actor='agent',updated_at=? WHERE status='scheduled' AND scheduled_at<?`,[now(),new Date(Date.now()-900000).toISOString()]);
  return rows[0]||null;
+ }
+ async linkDraft(id,input){
+ check(typeof input.noteKey==='string'&&/^n[a-z0-9]+$/.test(input.noteKey),'note下書きIDが不正です');
+ const rows=await this.all(`INSERT INTO note_drafts(article_id,revision,hash,note_key,linked_at) SELECT id,revision,hash,?,? FROM articles WHERE id=? AND lease=? AND lease_until>? AND status='preparing' AND approved_hash=hash AND approved_revision=revision ON CONFLICT(article_id) DO UPDATE SET revision=excluded.revision,hash=excluded.hash,note_key=excluded.note_key,linked_at=excluded.linked_at RETURNING article_id`,[input.noteKey,now(),id,input.lease,now()]);check(rows.length,'下書きの処理ロックが失効しています',409);return {linked:true};
  }
  async finish(id,input){
  check(['prepared','failed'].includes(input.status),'本番公開は無効です');
