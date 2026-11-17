@@ -1,6 +1,8 @@
 
 import {chromium} from '@playwright/test';
 import {content} from '../src/core.mjs';
+import {prepareNote,publishPrepared} from '../src/note-adapter.mjs';
+import {access} from 'node:fs/promises';
 import webpush from 'web-push';
 import {mkdir,writeFile,open,unlink} from 'node:fs/promises';
 import {resolve} from 'node:path';
@@ -9,6 +11,9 @@ if(!base.startsWith('https://')&&!/^http:\/\/127\.0\.0\.1:\d+$/.test(base))throw
 if(!process.env.MACHINE_TOKEN)throw Error('MACHINE_TOKENを設定してください');
 const headers={'Authorization':`Bearer ${process.env.MACHINE_TOKEN}`,'Content-Type':'application/json'};
 const call=async(path,data={})=>{const r=await fetch(base+'/api/machine/'+path,{method:'POST',headers,body:JSON.stringify(data),signal:AbortSignal.timeout(20000)});const j=await r.json();if(!r.ok)throw Error(j.error);return j};
+const mode=process.env.NOTE_MODE||'fixture';if(!['fixture','note-dry-run','note-live','notify-only'].includes(mode))throw Error('NOTE_MODEが不正です');
+if(['note-dry-run','note-live'].includes(mode))await access('.auth/note-profile-ready');
+if(mode==='note-live'){const config=await fetch(base+'/api/config').then(r=>r.json());if(process.env.NOTE_LIVE_ENABLED!=='true'||!config.liveEnabled)throw Error('本番投稿は無効です');}
 await mkdir('.state',{recursive:true,mode:0o700});
 // No stale PID lock takeover: inspect manually after a crash. DB lease also prevents competing agents.
 let lock;try{lock=await open('.state/agent.lock','wx',0o600)}catch{throw Error('Mac側の処理が既に起動中です。クラッシュ後はプロセスを確認してロックを除去してください')}
@@ -39,5 +44,23 @@ async function notifications(){
  await call('notification-result',{id:event.id,delivered,expired});
  }
 }
-try{await notifications();const article=await call('claim');if(article){if(typeof article.id!=='string'||typeof article.lease!=='string')throw Error('バックエンドからの処理情報が不正です');try{await dryrun(article);await call('finish',{id:article.id,lease:article.lease,status:'prepared'});console.log('入力テスト完了。noteには通信・公開していません。')}catch(e){await call('finish',{id:article.id,lease:article.lease,status:'failed',error:e.message});throw e}}else console.log('処理対象なし（停止中・未承認・予約前の可能性があります）');}
-finally{await lock.close();await unlink('.state/agent.lock')}
+try{
+ await notifications();const article=mode==='notify-only'?(await call('heartbeat'),null):await call('claim');
+ if(!article){console.log('処理対象なし（停止中・未承認・予約前）');}
+ else{
+  if(typeof article.id!=='string'||typeof article.lease!=='string')throw Error('処理情報が不正です');
+  let context,publishing=false;
+  try{
+   if(mode==='fixture'){await dryrun(article);await call('finish',{id:article.id,lease:article.lease,status:'prepared'});console.log('入力テスト完了。noteへの通信・公開なし。');}
+   else{
+    context=await chromium.launchPersistentContext(resolve('.auth/note-profile'),{headless:true,channel:process.env.BROWSER_CHANNEL||'chrome'});
+    const page=await context.newPage(),dir=resolve('artifacts',article.id+'-r'+article.revision);await mkdir(dir,{recursive:true,mode:0o700});
+    const receipt=await prepareNote(page,article,{onDraft:async noteKey=>writeFile(resolve(dir,'note-draft.json'),JSON.stringify({noteKey,id:article.id,revision:article.revision,hash:article.hash}),{mode:0o600})});
+    await page.screenshot({path:resolve(dir,'note-before-publish.png'),fullPage:true});await writeFile(resolve(dir,'note-prepared.json'),JSON.stringify(receipt,null,2),{mode:0o600});
+    if(mode==='note-live'){publishing=true;const published=await publishPrepared(page,article,receipt,call);console.log('公開結果:',published.url);}
+    else{await call('finish',{id:article.id,lease:article.lease,status:'prepared'});console.log('実noteの公開直前まで確認しました。公開していません。');}
+   }
+  }catch(error){if(publishing)await call('publication/uncertain',{id:article.id,lease:article.lease}).catch(()=>{});else await call('finish',{id:article.id,lease:article.lease,status:'failed',error:error.message});throw error;}
+  finally{await context?.close().catch(()=>{})}
+ }
+}finally{await lock.close();await unlink('.state/agent.lock')}

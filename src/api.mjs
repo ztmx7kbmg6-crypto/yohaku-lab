@@ -25,7 +25,7 @@ export async function api(req,env){
  let input={};try{if(text)input=JSON.parse(text)}catch{fail(400,'JSONが不正です')}
  const token=req.headers.get('Authorization')?.replace(/^Bearer /,'');
  const machine=path.startsWith('/api/machine/');
- if(path==='/api/config')return new Response(JSON.stringify({local:!!env.LOCAL,authMode:env.AUTH_MODE||'cloudflare',authReady:!!env.LOCAL||!!(env.AUTH_MODE==='passkey'&&env.SESSION_SECRET&&env.OWNER_KEY_HASH)||!!(env.ACCESS_TEAM_DOMAIN&&env.ACCESS_AUD&&env.OWNER_EMAIL)||!!env.SUPABASE_URL,liveEnabled:false,vapidPublicKey:env.VAPID_PUBLIC_KEY||null}),{headers:{...headers,'Content-Type':'application/json'}});
+ if(path==='/api/config')return new Response(JSON.stringify({local:!!env.LOCAL,authMode:env.AUTH_MODE||'cloudflare',authReady:!!env.LOCAL||!!(env.AUTH_MODE==='passkey'&&env.SESSION_SECRET&&env.OWNER_KEY_HASH)||!!(env.ACCESS_TEAM_DOMAIN&&env.ACCESS_AUD&&env.OWNER_EMAIL)||!!env.SUPABASE_URL,liveEnabled:env.NOTE_LIVE_ENABLED==='true',vapidPublicKey:env.VAPID_PUBLIC_KEY||null}),{headers:{...headers,'Content-Type':'application/json'}});
  if(path==='/api/login'){
  await accessUser(req.headers.get('Cf-Access-Jwt-Assertion'),env);
  const redirect=new URL(env.UI_REDIRECT_URL);if(redirect.origin!==env.UI_ORIGIN)fail(503,'ログイン先が不正です');
@@ -51,7 +51,8 @@ export async function api(req,env){
  else fail(404,'見つかりません');
  }else if(req.method==='POST'){
  if(machine){
- if(path==='/api/machine/claim')result=await store.claim();
+ if(path==='/api/machine/heartbeat'){await store.run('UPDATE settings SET heartbeat=? WHERE id=1',[new Date().toISOString()]);result={ok:true};}
+ else if(path==='/api/machine/claim')result=await store.claim();
  else if(path==='/api/machine/finish')result=await store.finish(input.id,input);
  else if(/^\/api\/machine\/publication\/(begin|attempt|confirm|uncertain)$/.test(path))result=await publication[path.split('/').at(-1)](input.id,input);
  else if(path==='/api/machine/import')result=input.id?await store.edit(input.id,input,'generator'):await store.create(input,'generator');
@@ -76,6 +77,7 @@ export async function api(req,env){
  const m=path.match(/^\/api\/articles\/([^/]+)\/(edit|decide|comment|cancel|reschedule|recover|reconcile)$/);if(!m)fail(404,'見つかりません');result=await store[m[2]](m[1],input);
  }
  }else fail(405,'対応していない操作です');
+ if(result&&Array.isArray(result.articles))result.liveEnabled=env.NOTE_LIVE_ENABLED==='true';
  return wrap(json(result));
  function wrap(response){for(const[k,v]of Object.entries(headers))response.headers.set(k,v);return response;}
  }catch(e){if(!(e instanceof Problem))console.error('API storage error',e.message);const response=json({error:e instanceof Problem?e.message:'処理できませんでした。設定と接続を確認してください'},e.status||500);for(const[k,v]of Object.entries(headers))response.headers.set(k,v);return response;}

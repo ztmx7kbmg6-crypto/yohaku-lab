@@ -11,6 +11,8 @@
 - [Cloudflare Access JWT検証](https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/authorization-cookie/validating-json/)：署名・issuer・audience・期限を検証。Ownerメールも固定。
 - [Playwright認証状態](https://playwright.dev/docs/auth)：Cookie等の状態ファイルはなりすましに利用され得る。Gitに入れない。
 
-比較：Supabase Auth/Postgres/RLSも選択肢だが、既存CloudflareアカウントがあるためWorkers + D1 + Accessを採用。Supabaseの登録・メール配信設定を増やさない。バックエンドは認証済みOwnerまたは権限制限したMacだけが到達でき、D1を直接ブラウザ公開しない。
+比較：Supabase Auth/Postgres/RLSも選択肢だが、カード登録不要という希望を受け、Workers + D1 + 管理者キー/パスキー認証を採用。Supabaseの登録・メール配信設定を増やさない。バックエンドは認証済みOwnerまたは権限制限したMacだけが到達でき、D1を直接ブラウザ公開しない。
 
-実機で未確認：iPhone到達通知、Cloudflare Accessの実メールログイン、GitHub App読み込み、AI生成API、有料note入力。これらを動作確認済みと扱わない。
+実機で未確認：iPhone到達通知、パスキーでの再ログイン、GitHub App読み込み、AI生成API、有料note入力。これらを動作確認済みと扱わない。
+
+[SimpleWebAuthn公式文書](https://simplewebauthn.dev/docs/packages/server)を確認してWebAuthnの登録・認証を実装。Zero Trustの申込みはカードと超過料金への同意が必要だったため、有効化していない。

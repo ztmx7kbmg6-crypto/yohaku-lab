@@ -1,13 +1,13 @@
 # 余白ラボ 編集室
 
-日本語・スマホ向けの記事管理PWA。記事単位の最終版承認、コメント、修正履歴、JSTランダム予約、停止、監査ログ、Macの排他処理を備えます。noteへの本番投稿は実装していません。
+日本語・スマホ向けの記事管理PWA。記事単位の最終版承認、コメント、修正履歴、JSTランダム予約、停止、監査ログ、Macの排他処理を備えます。note投稿アダプタは実装済みですが、専用Chromeでの実機確認待ちのため本番スイッチは無効です。
 
 ```sh
 npm ci
 SEED=1 npm start
 ```
 
-`http://127.0.0.1:4173` を開きます。`scripts/start.command` からも起動できます。Macローカル版はサンプル原稿3本入り。データは `.state/`、公開静的画面は `public/`。クラウド版はGitHub Pages + Cloudflare Workers/D1/Access。管理画面に秘密鍵・Githubトークン・原稿データを埋め込みません。
+`http://127.0.0.1:4173` を開きます。`scripts/start.command` からも起動できます。Macローカル版はサンプル原稿3本入り。データは `.state/`、公開静的画面は `public/`。クラウド版はGitHub Pages + Cloudflare Workers/D1とカード不要のパスキー認証。管理画面に秘密鍵・Githubトークン・原稿データを埋め込みません。
 
 - [接続・運用・復旧の手順](docs/SETUP.md)
 - [公式仕様と未検証項目](docs/SOURCES.md)
