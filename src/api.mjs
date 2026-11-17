@@ -68,6 +68,7 @@ export async function api(req,env){
  }else if(path==='/api/articles')result=await store.create(input);
  else if(path==='/api/schedule')result=await store.schedule(input);
  else if(path==='/api/pause')result=await store.pause(input.paused);
+ else if(path==='/api/notifications/test'){const n=await store.one('SELECT COUNT(*) AS n FROM subscriptions');if(!n.n)fail(409,'先にこの端末の通知を有効にしてください');await store.run("INSERT INTO notifications(kind) VALUES('test')");result={queued:true};}
  else if(path==='/api/subscriptions'){
  const s=input.subscription;
  if(!s?.endpoint||!s.keys?.p256dh||!s.keys?.auth||JSON.stringify(s).length>10000)fail(400,'通知登録が不正です');

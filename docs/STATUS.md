@@ -1,4 +1,4 @@
-# 現在の状態（2026-11-17 JST）
+# 現在の状態（2026-11-18 JST）
 
 - Cloudflareの現在ログイン中アカウントへWorker/D1を新規配置。旧環境は削除していない。
 - 接続先: https://yohaku-lab-api.yohaku-lab-yuto.workers.dev

@@ -40,7 +40,7 @@ async function notifications(){
  const {events,subscriptions}=await call('notifications');if(!subscriptions.length)return;
  for(const event of events){let delivered=true;const expired=[];
  for(const {payload}of subscriptions){const sub=JSON.parse(payload),u=new URL(sub.endpoint);if(u.protocol!=='https:'||u.port||u.username||u.password||!['web.push.apple.com','fcm.googleapis.com','updates.push.services.mozilla.com'].some(h=>u.hostname===h||u.hostname.endsWith('.'+h))){delivered=false;continue}
- try{await webpush.sendNotification(sub,JSON.stringify({type:'update'}),{TTL:3600,timeout:10000})}catch(e){if([404,410].includes(e.statusCode))expired.push(sub.endpoint);else delivered=false}}
+ try{await webpush.sendNotification(sub,JSON.stringify({type:event.kind==='test'?'test':'update'}),{TTL:3600,timeout:10000})}catch(e){if([404,410].includes(e.statusCode))expired.push(sub.endpoint);else delivered=false}}
  await call('notification-result',{id:event.id,delivered,expired});
  }
 }
