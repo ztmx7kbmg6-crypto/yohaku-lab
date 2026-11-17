@@ -37,3 +37,9 @@ CREATE TRIGGER IF NOT EXISTS no_audit_update BEFORE UPDATE ON audit BEGIN SELECT
 CREATE TRIGGER IF NOT EXISTS no_audit_delete BEFORE DELETE ON audit BEGIN SELECT RAISE(ABORT,'audit immutable'); END;
 CREATE TRIGGER IF NOT EXISTS no_revision_update BEFORE UPDATE ON revisions BEGIN SELECT RAISE(ABORT,'revision immutable'); END;
 CREATE TRIGGER IF NOT EXISTS no_revision_delete BEFORE DELETE ON revisions BEGIN SELECT RAISE(ABORT,'revision immutable'); END;
+CREATE TRIGGER IF NOT EXISTS require_approval_insert BEFORE INSERT ON articles
+WHEN NEW.status IN('approved','scheduled','preparing','prepared','published') AND (NEW.approved_hash IS NULL OR NEW.approved_revision IS NULL OR NEW.approved_hash<>NEW.hash OR NEW.approved_revision<>NEW.revision)
+BEGIN SELECT RAISE(ABORT,'final revision approval required'); END;
+CREATE TRIGGER IF NOT EXISTS require_approval_update BEFORE UPDATE ON articles
+WHEN NEW.status IN('approved','scheduled','preparing','prepared','published') AND (NEW.approved_hash IS NULL OR NEW.approved_revision IS NULL OR NEW.approved_hash<>NEW.hash OR NEW.approved_revision<>NEW.revision)
+BEGIN SELECT RAISE(ABORT,'final revision approval required'); END;
