@@ -4,6 +4,8 @@
 
 ## 最初に一度だけ：Cloudflareのメール認証
 
+[公開済みの編集室](https://ztmx7kbmg6-crypto.github.io/yohaku-lab/)
+
 Cloudflareの既存OAuth接続にはWorkers/D1の作成権限がありますが、Accessの管理権限はありません。Zero Trustも未有効でした。したがって、この初期設定だけはアカウント所有者による操作が必要です。
 
 1. [Cloudflare Zero Trust](https://one.dash.cloudflare.com/) を開く。Freeプランの組織を作成し、チーム名を決める。請求情報を求められる場合は内容を確認する。有料プランは選ばない。
@@ -63,7 +65,7 @@ Macの環境変数 `GITHUB_APP_ID`, `GITHUB_INSTALLATION_ID`, `GITHUB_APP_KEY_FI
 - `prepared`は外部通信を遮断したテスト画面への入力成功。note下書き保存や公開成功ではない。
 - noteで本人が手動公開した記事は、最終版を承認した状態で「公開URLの記録」に記録できる。これは本人の申告を記録する機能で、note側との自動照合ではない。
 - `.state/agent.lock`が残った場合は、実行中プロセスがないことを確認後に削除する。ロックを勝手に引き継がない。
-- ローカルDBは `node scripts/backup.mjs`。バックアップは `.state/backups` に保存する。原稿を含むので公開しない。クラウドは `npx wrangler d1 export yohaku-lab --remote --output .state/cloud-backup.sql`。DB復元は処理停止・バックアップ後に実施する。既存DBの削除はしない。
+- ローカルDBは `node scripts/backup.mjs`。バックアップは `.state/backups` に保存する。原稿を含むので公開しない。既定のローカルDBは `.state/local/yohaku.sqlite`。クラウドは `npx wrangler d1 export yohaku-lab --remote --output .state/cloud-backup.sql`。DB復元は処理停止・バックアップ後に実施する。既存DBの削除はしない。
 
 ## noteとの実接続で残ること
 

@@ -14,5 +14,7 @@
     "UI_REDIRECT_URL": "https://ztmx7kbmg6-crypto.github.io/yohaku-lab/",
     "AUTH_MODE": "cloudflare"
   },
-  "account_id": "dd72c6f86b52c7f8818738c2c3b65144"
+  "account_id": "dd72c6f86b52c7f8818738c2c3b65144",
+  "preview_urls": false,
+  "workers_dev": true
 }

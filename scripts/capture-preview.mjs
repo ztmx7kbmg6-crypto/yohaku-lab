@@ -1,0 +1,2 @@
+import {chromium} from '@playwright/test';
+const browser=await chromium.launch({channel:'chrome'});const page=await browser.newPage({viewport:{width:1440,height:1000}});await page.goto('http://127.0.0.1:4173/');await page.locator('.card').first().waitFor();await page.screenshot({path:'../余白ラボ-編集室.png',fullPage:true});await page.setViewportSize({width:390,height:844});await page.getByRole('button',{name:'仕事の余白をつくる、問いかけの設計を確認'}).click();await page.screenshot({path:'../余白ラボ-iPhoneプレビュー.png',fullPage:true});await browser.close();

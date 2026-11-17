@@ -5,7 +5,7 @@ import {resolve,extname} from 'node:path';
 import {database} from './sqlite.mjs';
 import {api} from './api.mjs';
 import {Store} from './core.mjs';
-const dir=resolve('.state');await mkdir(dir,{recursive:true,mode:0o700});await chmod(dir,0o700);
+const dir=resolve(process.env.STATE_DIR||'.state/local');await mkdir(dir,{recursive:true,mode:0o700});await chmod(dir,0o700);
 const db=database(resolve(dir,'yohaku.sqlite'));db.raw.exec(await readFile('schema.sql','utf8'));
 await chmod(resolve(dir,'yohaku.sqlite'),0o600);
 const port=Number(process.env.PORT||4173),base=`http://127.0.0.1:${port}`;

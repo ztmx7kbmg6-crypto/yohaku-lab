@@ -1,5 +1,6 @@
 
 'use strict';
+if(window.top!==window.self){document.body.textContent='編集室は独立した画面で開いてください。';throw Error('Embedded approval disabled');}
 const $=s=>document.querySelector(s),el=(tag,cls,text)=>{const e=document.createElement(tag);if(cls)e.className=cls;if(text!==undefined)e.textContent=text;return e};
 const base=window.YOHAKU_CONFIG.apiBase||'';
 let incoming=new URLSearchParams(location.hash.slice(1)).get('access_token');if(incoming)history.replaceState(null,'',location.pathname+location.search);

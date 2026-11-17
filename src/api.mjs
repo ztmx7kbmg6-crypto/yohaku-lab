@@ -1,7 +1,7 @@
 
 import {Store,Problem} from './core.mjs';
 import {accessUser} from './access.mjs';
-const json=(v,status=200)=>Response.json(v??{ok:true},{status,headers:{'Cache-Control':'no-store'}});
+const json=(v,status=200)=>Response.json(v===undefined?{ok:true}:v,{status,headers:{'Cache-Control':'no-store'}});
 const fail=(s,msg)=>{throw new Problem(msg,s)};
 async function equal(a,b){if(!a||!b)return false;const hash=s=>crypto.subtle.digest('SHA-256',new TextEncoder().encode(s));const [x,y]=await Promise.all([hash(a),hash(b)]);return new Uint8Array(x).every((v,i)=>v===new Uint8Array(y)[i]);}
 async function user(token,env){
@@ -71,5 +71,5 @@ export async function api(req,env){
  }else fail(405,'対応していない操作です');
  return wrap(json(result));
  function wrap(response){for(const[k,v]of Object.entries(headers))response.headers.set(k,v);return response;}
- }catch(e){const response=json({error:e instanceof Problem?e.message:'処理できませんでした。設定と接続を確認してください'},e.status||500);for(const[k,v]of Object.entries(headers))response.headers.set(k,v);return response;}
+ }catch(e){if(!(e instanceof Problem))console.error('API storage error',e.message);const response=json({error:e instanceof Problem?e.message:'処理できませんでした。設定と接続を確認してください'},e.status||500);for(const[k,v]of Object.entries(headers))response.headers.set(k,v);return response;}
 }

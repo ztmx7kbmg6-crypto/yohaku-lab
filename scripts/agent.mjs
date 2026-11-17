@@ -1,5 +1,6 @@
 
 import {chromium} from '@playwright/test';
+import {content} from '../src/core.mjs';
 import webpush from 'web-push';
 import {mkdir,writeFile,open,unlink} from 'node:fs/promises';
 import {resolve} from 'node:path';
@@ -14,6 +15,7 @@ let lock;try{lock=await open('.state/agent.lock','wx',0o600)}catch{throw Error('
 await lock.writeFile(String(process.pid));
 async function dryrun(article){
  const {hash,approved_hash,revision,approved_revision}=article;
+ const canonical=await content({...article,tags:JSON.parse(article.tags)});if(canonical.hash!==hash)throw Error('原稿ハッシュが一致しません');
  if(hash!==approved_hash||revision!==approved_revision)throw Error('承認した最終版と一致しません');
  const browser=await chromium.launch({headless:true,channel:process.env.BROWSER_CHANNEL||'chrome'});
  try{
@@ -37,5 +39,5 @@ async function notifications(){
  await call('notification-result',{id:event.id,delivered,expired});
  }
 }
-try{await notifications();const article=await call('claim');if(article){try{await dryrun(article);await call('finish',{id:article.id,lease:article.lease,status:'prepared'});console.log('入力テスト完了。noteには通信・公開していません。')}catch(e){await call('finish',{id:article.id,lease:article.lease,status:'failed',error:e.message});throw e}}else console.log('処理対象なし（停止中・未承認・予約前の可能性があります）');}
+try{await notifications();const article=await call('claim');if(article){if(typeof article.id!=='string'||typeof article.lease!=='string')throw Error('バックエンドからの処理情報が不正です');try{await dryrun(article);await call('finish',{id:article.id,lease:article.lease,status:'prepared'});console.log('入力テスト完了。noteには通信・公開していません。')}catch(e){await call('finish',{id:article.id,lease:article.lease,status:'failed',error:e.message});throw e}}else console.log('処理対象なし（停止中・未承認・予約前の可能性があります）');}
 finally{await lock.close();await unlink('.state/agent.lock')}
