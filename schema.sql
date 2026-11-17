@@ -43,3 +43,11 @@ BEGIN SELECT RAISE(ABORT,'final revision approval required'); END;
 CREATE TRIGGER IF NOT EXISTS require_approval_update BEFORE UPDATE ON articles
 WHEN NEW.status IN('approved','scheduled','preparing','prepared','published') AND (NEW.approved_hash IS NULL OR NEW.approved_revision IS NULL OR NEW.approved_hash<>NEW.hash OR NEW.approved_revision<>NEW.revision)
 BEGIN SELECT RAISE(ABORT,'final revision approval required'); END;
+
+CREATE TABLE IF NOT EXISTS publication_permissions(article_id TEXT PRIMARY KEY REFERENCES articles(id),revision INTEGER NOT NULL,hash TEXT NOT NULL,granted_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS publication_attempts(article_id TEXT PRIMARY KEY REFERENCES articles(id),revision INTEGER NOT NULL,hash TEXT NOT NULL UNIQUE,note_key TEXT NOT NULL UNIQUE,nonce TEXT NOT NULL UNIQUE,stage TEXT NOT NULL CHECK(stage IN('armed','attempting','confirmed')),started_at TEXT NOT NULL,expires_at TEXT NOT NULL);
+CREATE TRIGGER IF NOT EXISTS invalidate_publication_permission AFTER UPDATE ON articles WHEN OLD.revision<>NEW.revision OR OLD.hash<>NEW.hash OR NEW.approved_hash IS NULL BEGIN DELETE FROM publication_permissions WHERE article_id=NEW.id; END;
+
+CREATE TABLE IF NOT EXISTS passkeys(id TEXT PRIMARY KEY,public_key TEXT NOT NULL,counter INTEGER NOT NULL,transports TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS auth_challenges(id TEXT PRIMARY KEY,challenge TEXT NOT NULL,kind TEXT NOT NULL,expires_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS auth_rate(bucket TEXT PRIMARY KEY,count INTEGER NOT NULL);

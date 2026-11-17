@@ -1,10 +1,13 @@
 
 import {Store,Problem} from './core.mjs';
 import {accessUser} from './access.mjs';
+import {Publication} from './publication.mjs';
+import {cardlessAuth,cardlessUser} from './cardless.mjs';
 const json=(v,status=200)=>Response.json(v===undefined?{ok:true}:v,{status,headers:{'Cache-Control':'no-store'}});
 const fail=(s,msg)=>{throw new Problem(msg,s)};
 async function equal(a,b){if(!a||!b)return false;const hash=s=>crypto.subtle.digest('SHA-256',new TextEncoder().encode(s));const [x,y]=await Promise.all([hash(a),hash(b)]);return new Uint8Array(x).every((v,i)=>v===new Uint8Array(y)[i]);}
 async function user(token,env){
+ if(env.AUTH_MODE==='passkey')return cardlessUser(token,env);
  if(env.ACCESS_TEAM_DOMAIN)return accessUser(token,env);
  if(!env.SUPABASE_URL||!env.SUPABASE_PUBLIC_KEY||!env.OWNER_ID)fail(503,'認証サービスの初期設定が必要です');
  const r=await fetch(`${env.SUPABASE_URL}/auth/v1/user`,{headers:{apikey:env.SUPABASE_PUBLIC_KEY,Authorization:`Bearer ${token}`}});
@@ -22,13 +25,14 @@ export async function api(req,env){
  let input={};try{if(text)input=JSON.parse(text)}catch{fail(400,'JSONが不正です')}
  const token=req.headers.get('Authorization')?.replace(/^Bearer /,'');
  const machine=path.startsWith('/api/machine/');
- if(path==='/api/config')return new Response(JSON.stringify({local:!!env.LOCAL,authMode:env.AUTH_MODE||'cloudflare',authReady:!!env.LOCAL||!!(env.ACCESS_TEAM_DOMAIN&&env.ACCESS_AUD&&env.OWNER_EMAIL)||!!env.SUPABASE_URL,liveEnabled:false,vapidPublicKey:env.VAPID_PUBLIC_KEY||null}),{headers:{...headers,'Content-Type':'application/json'}});
+ if(path==='/api/config')return new Response(JSON.stringify({local:!!env.LOCAL,authMode:env.AUTH_MODE||'cloudflare',authReady:!!env.LOCAL||!!(env.AUTH_MODE==='passkey'&&env.SESSION_SECRET&&env.OWNER_KEY_HASH)||!!(env.ACCESS_TEAM_DOMAIN&&env.ACCESS_AUD&&env.OWNER_EMAIL)||!!env.SUPABASE_URL,liveEnabled:false,vapidPublicKey:env.VAPID_PUBLIC_KEY||null}),{headers:{...headers,'Content-Type':'application/json'}});
  if(path==='/api/login'){
  await accessUser(req.headers.get('Cf-Access-Jwt-Assertion'),env);
  const redirect=new URL(env.UI_REDIRECT_URL);if(redirect.origin!==env.UI_ORIGIN)fail(503,'ログイン先が不正です');
  redirect.hash=new URLSearchParams({access_token:req.headers.get('Cf-Access-Jwt-Assertion')}).toString();
  return new Response(null,{status:302,headers:{Location:redirect.href,'Cache-Control':'no-store','Referrer-Policy':'no-referrer'}});
  }
+ if(path.startsWith('/api/auth/')&&env.AUTH_MODE==='passkey'&&!env.LOCAL){if(req.method!=='POST')fail(405,'POSTが必要です');if(['/api/auth/key','/api/auth/login-options'].includes(path)){const hour=new Date().toISOString().slice(0,13),ip=req.headers.get('CF-Connecting-IP')||'unknown';const h=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(ip+hour));const key=Array.from(new Uint8Array(h)).map(x=>x.toString(16).padStart(2,'0')).join('');const rate=await env.DB.prepare('INSERT INTO auth_rate(bucket,count) VALUES(?,1) ON CONFLICT(bucket) DO UPDATE SET count=count+1 RETURNING count').bind(hour+key).first();if(rate.count>30)fail(429,'しばらく待ってからログインしてください');}return wrap(json(await cardlessAuth(path,input,token,env)));}
  if(path.startsWith('/api/auth/')&&!env.LOCAL){
  if(req.method!=='POST')fail(405,'POSTが必要です');
  if(!env.OWNER_EMAIL||!env.SUPABASE_URL||!env.SUPABASE_PUBLIC_KEY)fail(503,'認証の初期設定が必要です');
@@ -40,7 +44,7 @@ export async function api(req,env){
  }
  if(machine){if(!await equal(token,env.MACHINE_TOKEN))fail(401,'Macの認証が必要です');}
  else if(!env.LOCAL)await user(token,env);
- const store=new Store(env.DB);let result;
+ const store=new Store(env.DB),publication=new Publication(store,{enabled:env.NOTE_LIVE_ENABLED==='true'});let result;
  if(req.method==='GET'&&!machine){
  if(path==='/api/state')result=await store.snapshot();
  else if(/^\/api\/articles\/[^/]+$/.test(path))result=await store.detail(path.split('/').at(-1));
@@ -49,6 +53,7 @@ export async function api(req,env){
  if(machine){
  if(path==='/api/machine/claim')result=await store.claim();
  else if(path==='/api/machine/finish')result=await store.finish(input.id,input);
+ else if(/^\/api\/machine\/publication\/(begin|attempt|confirm|uncertain)$/.test(path))result=await publication[path.split('/').at(-1)](input.id,input);
  else if(path==='/api/machine/import')result=input.id?await store.edit(input.id,input,'generator'):await store.create(input,'generator');
  else if(path==='/api/machine/notifications')result={events:await store.all('SELECT * FROM notifications WHERE delivered=0 AND attempts<5 ORDER BY id LIMIT 20'),subscriptions:await store.all('SELECT payload FROM subscriptions')};
  else if(path==='/api/machine/notification-result'){
@@ -66,6 +71,8 @@ export async function api(req,env){
  await store.run('INSERT OR REPLACE INTO subscriptions(endpoint,payload) VALUES(?,?)',[s.endpoint,JSON.stringify(s)]);
  }else if(path==='/api/unsubscribe'){await store.run('DELETE FROM subscriptions WHERE endpoint=?',[input.endpoint]);}
  else {
+ const special=path.match(/^\/api\/articles\/([^/]+)\/(authorize-publication|revoke-publication)$/);
+ if(special){result=special[2]==='authorize-publication'?await publication.authorize(special[1],input):await publication.revoke(special[1]);return wrap(json(result));}
  const m=path.match(/^\/api\/articles\/([^/]+)\/(edit|decide|comment|cancel|reschedule|recover|reconcile)$/);if(!m)fail(404,'見つかりません');result=await store[m[2]](m[1],input);
  }
  }else fail(405,'対応していない操作です');

@@ -6,15 +6,18 @@
     {
       "binding": "DB",
       "database_name": "yohaku-lab",
-      "database_id": "fa5fce18-b50c-4b71-b560-2285b54d230d"
+      "database_id": "cbdc935c-1967-4507-a772-ad0b1a70142e"
     }
   ],
   "vars": {
     "UI_ORIGIN": "https://ztmx7kbmg6-crypto.github.io",
     "UI_REDIRECT_URL": "https://ztmx7kbmg6-crypto.github.io/yohaku-lab/",
-    "AUTH_MODE": "cloudflare"
+    "AUTH_MODE": "passkey"
   },
-  "account_id": "dd72c6f86b52c7f8818738c2c3b65144",
+  "account_id": "791be29009aa75c3eb1dbd97b435f88b",
   "preview_urls": false,
-  "workers_dev": true
+  "workers_dev": true,
+  "compatibility_flags": [
+    "nodejs_compat"
+  ]
 }
