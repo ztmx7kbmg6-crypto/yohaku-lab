@@ -1,4 +1,4 @@
-import {DAILY_LIMIT,MIN_GAP,ACTIVE_SQL,TIME_SQL,dayBounds,planTimes,dateAvailability} from './scheduling.mjs';
+import {DAILY_LIMIT,FREE_LIMIT,PAID_LIMIT,MIN_GAP,ACTIVE_SQL,TIME_SQL,dayBounds,planTimes,dateAvailability,slotsUsed,fitsDailyQuota} from './scheduling.mjs';
 
 export class Problem extends Error {constructor(message,status=400){super(message);this.status=status;}}
 const check=(ok,msg,status=400)=>{if(!ok)throw new Problem(msg,status)};
@@ -49,21 +49,83 @@ export class Store {
  const rows=await this.all(`UPDATE articles SET status=?,approved_hash=CASE WHEN ?='approved' THEN hash ELSE NULL END,approved_revision=CASE WHEN ?='approved' THEN revision ELSE NULL END,scheduled_at=NULL,actor='owner',updated_at=? WHERE id=? AND revision=? AND hash=? AND status IN('draft','revision_requested','rejected','approved','scheduled','prepared','failed') RETURNING id`,[input.decision,input.decision,input.decision,now(),id,input.revision,input.hash]);
  check(rows.length,'最終版が変わりました。再読み込みして確認してください',409);return this.get(id);
  }
- async reservations(exclude=[]){const ids=Array.isArray(exclude)?exclude:[];return this.all(`SELECT id,${TIME_SQL} AS at FROM articles WHERE ${ACTIVE_SQL} ${ids.length?'AND id NOT IN('+ids.map(()=>'?').join(',')+')':''}` ,ids);}
+ async reservations(exclude=[]){const ids=Array.isArray(exclude)?exclude:[];return this.all(`SELECT id,price,${TIME_SQL} AS at FROM articles WHERE ${ACTIVE_SQL} ${ids.length?'AND id NOT IN('+ids.map(()=>'?').join(',')+')':''}` ,ids);}
  async availability(input={},clock=new Date()){
-  let exclude=[];if(input.exclude){const a=await this.get(input.exclude);check(a.status==='scheduled','予約済みの記事だけ予定日を変更できます',409);exclude=[a.id];}
+  const excluded=input.exclude?await this.get(input.exclude):null;
+  if(excluded)check(excluded.status==='scheduled','予約済みの記事だけ予定日を変更できます',409);
+  const exclude=excluded?[excluded.id]:[];
   const busy=await this.reservations(exclude),today=clock.toLocaleDateString('sv-SE',{timeZone:'Asia/Tokyo'}),start=new Date(today+'T00:00:00+09:00');
-  return {days:Array.from({length:60},(_,i)=>dateAvailability(new Date(+start+i*86400000).toLocaleDateString('sv-SE',{timeZone:'Asia/Tokyo'}),busy,clock)),limit:DAILY_LIMIT};
+  return {days:Array.from({length:60},(_,i)=>dateAvailability(new Date(+start+i*86400000).toLocaleDateString('sv-SE',{timeZone:'Asia/Tokyo'}),busy,clock)),limit:DAILY_LIMIT,price:excluded?.price};
  }
- async reserve(rows,date,expectedStatus,clock=new Date()){
-  const bounds=dayBounds(date);check(bounds,'日付を指定してください');const ids=rows.map(a=>a.id),busy=await this.reservations(ids);
-  const used=busy.filter(r=>r.at&&r.at>=bounds.start&&r.at<bounds.end).length;check(used+rows.length<=DAILY_LIMIT,'この日は公開済み・予約済みを合わせて3本までです。別の日を選んでください',409);
-  const times=planTimes(date,rows.length,busy,clock);check(times,'選択した本数を予約できる時間枠がありません。別の日か少ない本数を選んでください');
-  const targets=rows.map(()=>'(id=? AND revision=? AND hash=? AND status=? AND approved_hash=hash AND approved_revision=revision)').join(' OR '),placeholders=ids.map(()=>'?').join(',');
-  const conflicts=times.map(()=>`((${TIME_SQL}>=? AND ${TIME_SQL}<?) OR ABS(CAST(ROUND((julianday(${TIME_SQL})-2440587.5)*86400000) AS INTEGER)-?)<${MIN_GAP})`).join(' OR ');
-  const sql=`WITH expected AS MATERIALIZED (SELECT id FROM articles WHERE ${targets}), guard AS MATERIALIZED (SELECT (SELECT COUNT(*) FROM expected)=? AND (SELECT COUNT(*) FROM articles WHERE ${ACTIVE_SQL} AND id NOT IN(${placeholders}) AND ${TIME_SQL}>=? AND ${TIME_SQL}<?)+?<=${DAILY_LIMIT} AND NOT EXISTS(SELECT 1 FROM articles WHERE ${ACTIVE_SQL} AND id NOT IN(${placeholders}) AND (${conflicts})) AS allowed) UPDATE articles SET scheduled_at=CASE id ${ids.map(()=> 'WHEN ? THEN ?').join(' ')} END,status='scheduled',error=NULL,actor='owner',updated_at=? WHERE id IN(SELECT id FROM expected) AND (SELECT allowed FROM guard)=1 RETURNING id`;
-  const args=[...rows.flatMap(a=>[a.id,a.revision,a.hash,expectedStatus]),rows.length,...ids,bounds.start,bounds.end,rows.length,...ids,...times.flatMap(t=>[t.windowStart,t.windowEnd,t.ms]),...rows.flatMap((a,i)=>[a.id,times[i].at]),now()];
-  const changed=await this.all(sql,args);check(changed.length===rows.length,'承認状態または予定が変わりました。予約は作成されていません。再読み込みしてください',409);return this.snapshot();
+ async reserve(rows,date,expectedStatus,clock=new Date(),automatic=false){
+  const bounds=dayBounds(date);
+  check(bounds,'日付を指定してください');
+  const ids=rows.map(a=>a.id),prices=rows.map(a=>a.price);
+  const busy=await this.reservations(ids);
+  check(fitsDailyQuota(slotsUsed(bounds,busy),prices),'この日の枠は無料1本・200円2本までです。別の日を選んでください',409);
+  const times=planTimes(date,rows.length,busy,clock,undefined,automatic);
+  check(times,'選択した本数を予約できる時間枠がありません。別の日か少ない本数を選んでください');
+  const targets=rows.map(()=>`(id=? AND revision=? AND hash=? AND status=? ${automatic?'AND updated_at=?':''})`).join(' OR ');
+  const placeholders=ids.map(()=>'?').join(',');
+  const conflicts=times.map(()=>`((at>=? AND at<?) OR ABS(CAST(ROUND((julianday(at)-2440587.5)*86400000) AS INTEGER)-?)<${MIN_GAP})`).join(' OR ');
+  const free=prices.filter(price=>price===0).length;
+  // Both the matched article versions and the available slots are checked in the same write.
+  const sql=`WITH
+    expected AS MATERIALIZED (
+      SELECT id FROM articles WHERE (${targets}) ${automatic?'':'AND approved_hash=hash AND approved_revision=revision'}
+    ),
+    occupied AS MATERIALIZED (
+      SELECT price,${TIME_SQL} AS at FROM articles WHERE ${ACTIVE_SQL} AND id NOT IN(${placeholders})
+    ),
+    day AS MATERIALIZED (SELECT price FROM occupied WHERE at>=? AND at<?),
+    guard AS MATERIALIZED (
+      SELECT (SELECT COUNT(*) FROM expected)=?
+        AND (SELECT COUNT(*) FROM day)+?<=${DAILY_LIMIT}
+        AND (SELECT COUNT(*) FROM day WHERE price=0)+?<=${FREE_LIMIT}
+        AND (SELECT COUNT(*) FROM day WHERE price=200)+?<=${PAID_LIMIT}
+        AND NOT EXISTS(SELECT 1 FROM occupied WHERE ${conflicts}) AS allowed
+    )
+    UPDATE articles
+    SET scheduled_at=CASE id ${ids.map(()=> 'WHEN ? THEN ?').join(' ')} END,
+        status='scheduled',error=NULL,actor=?,updated_at=?
+        ${automatic?', approved_hash=hash, approved_revision=revision':''}
+    WHERE id IN(SELECT id FROM expected) AND (SELECT allowed FROM guard)=1
+    RETURNING id`;
+  const args=[...rows.flatMap(a=>[a.id,a.revision,a.hash,expectedStatus,...(automatic?[a.updated_at]:[])]),...ids,bounds.start,bounds.end,
+   rows.length,rows.length,free,rows.length-free,...times.flatMap(t=>[t.windowStart,t.windowEnd,t.ms]),
+   ...rows.flatMap((a,i)=>[a.id,times[i].at]),automatic?'owner-auto':'owner',now()];
+  const changed=await this.all(sql,args);
+  check(changed.length===rows.length,'承認状態または予定が変わりました。予約は作成されていません。再読み込みしてください',409);
+  return automatic?this.get(ids[0]):this.snapshot();
+ }
+ async approveAndSchedule(id,input,clock=new Date()){
+  check(input.confirm===true&&input.confirmImages===true&&input.confirmCover===true&&input.confirmPublication===true,
+    '画像を含む最終版を確認し、noteへ公開することに同意してください');
+  check(['draft','revision_requested','rejected','approved'].includes(input.expectedStatus),'記事を再読み込みしてください',409);
+  for(let attempt=0;attempt<5;attempt++){
+   const article=await this.get(id);
+   check(article.revision===input.revision&&article.hash===input.hash,'最終版が変わりました。再読み込みして確認してください',409);
+   if(article.status==='scheduled'&&article.approved_hash===article.hash&&article.approved_revision===article.revision){
+    const grant=await this.one('SELECT article_id FROM publication_permissions WHERE article_id=? AND revision=? AND hash=?',[id,article.revision,article.hash]);
+    check(grant,'公開許可が変わりました。記事を再読み込みしてください',409);
+    return article;
+   }
+   check(article.status===input.expectedStatus&&article.updated_at===input.expectedUpdatedAt,'記事の状態が変わりました。再読み込みしてください',409);
+   await this.checkMedia(await content(storedContent(article)),true);
+   const busy=await this.reservations([id]);
+   const today=clock.toLocaleDateString('sv-SE',{timeZone:'Asia/Tokyo'});
+   const start=Date.parse(dayBounds(today).start);
+   // Every occupied date accounts for at least one row. There is an empty day within this search.
+   let date;
+   for(let offset=0;offset<=busy.length+1;offset++){
+    const candidate=new Date(start+offset*86400000).toLocaleDateString('sv-SE',{timeZone:'Asia/Tokyo'});
+    const day=dateAvailability(candidate,busy,clock);
+    if(day.maxSelectable&&(article.price===0?day.freeRemaining:day.paidRemaining)){date=candidate;break;}
+   }
+   check(date,'公開できる空き枠がありません',409);
+   try{return await this.reserve([article],date,article.status,clock,true);}
+   catch(error){if(!(error instanceof Problem)||![400,409].includes(error.status)||attempt===4)throw error;}
+  }
  }
  async schedule(input,clock=new Date()){
   check(dayBounds(input.date),'日付を指定してください');check(Array.isArray(input.ids)&&input.ids.length>=1&&input.ids.length<=3&&new Set(input.ids).size===input.ids.length,'1〜3記事を選んでください');
@@ -79,9 +141,9 @@ export class Store {
  async retry(id,input){
  check(input.confirm===true,'承認した最終版を今すぐ投稿する明示確認が必要です');
  const a=await this.get(id);await this.checkMedia(await content(storedContent(a)),true);
- const today=new Date().toLocaleDateString('sv-SE',{timeZone:'Asia/Tokyo'}),bounds=dayBounds(today);const active=await this.reservations([id]);check(active.filter(r=>r.at&&r.at>=bounds.start&&r.at<bounds.end).length<DAILY_LIMIT,'今日は3本の枠が埋まっています。別の日に予約してください',409);
+ const today=new Date().toLocaleDateString('sv-SE',{timeZone:'Asia/Tokyo'}),bounds=dayBounds(today);const active=await this.reservations([id]);check(fitsDailyQuota(slotsUsed(bounds,active),[a.price]),'この日の枠は無料1本・200円2本までです。別の日に予約してください',409);
  check(await this.retryable(id),'noteの処理履歴があるか、最終版の承認・公開許可が変わっています。再投稿せず確認してください',409);
- const rows=await this.all(`UPDATE articles SET status='scheduled',scheduled_at=?,error=NULL,actor='owner',updated_at=? WHERE id=? AND revision=? AND hash=? AND status='failed' AND approved_hash=hash AND approved_revision=revision AND public_url IS NULL AND lease IS NULL AND EXISTS(SELECT 1 FROM publication_permissions p WHERE p.article_id=articles.id AND p.hash=articles.hash AND p.revision=articles.revision) AND NOT EXISTS(SELECT 1 FROM note_drafts WHERE article_id=articles.id) AND NOT EXISTS(SELECT 1 FROM publication_attempts WHERE article_id=articles.id) AND NOT EXISTS(SELECT 1 FROM publication_attempt_history WHERE article_id=articles.id) AND (SELECT COUNT(*) FROM articles WHERE ${ACTIVE_SQL} AND ${TIME_SQL}>=? AND ${TIME_SQL}<?)<${DAILY_LIMIT} RETURNING id`,[now(),now(),id,input.revision,input.hash,bounds.start,bounds.end]);
+ const rows=await this.all(`UPDATE articles SET status='scheduled',scheduled_at=?,error=NULL,actor='owner',updated_at=? WHERE id=? AND revision=? AND hash=? AND status='failed' AND approved_hash=hash AND approved_revision=revision AND public_url IS NULL AND lease IS NULL AND EXISTS(SELECT 1 FROM publication_permissions p WHERE p.article_id=articles.id AND p.hash=articles.hash AND p.revision=articles.revision) AND NOT EXISTS(SELECT 1 FROM note_drafts WHERE article_id=articles.id) AND NOT EXISTS(SELECT 1 FROM publication_attempts WHERE article_id=articles.id) AND NOT EXISTS(SELECT 1 FROM publication_attempt_history WHERE article_id=articles.id) AND (SELECT COUNT(*) FROM articles WHERE ${ACTIVE_SQL} AND ${TIME_SQL}>=? AND ${TIME_SQL}<?)<${DAILY_LIMIT} AND (SELECT COUNT(*) FROM articles AS occupied WHERE ${ACTIVE_SQL} AND ${TIME_SQL}>=? AND ${TIME_SQL}<? AND occupied.price=articles.price)<CASE price WHEN 0 THEN ${FREE_LIMIT} ELSE ${PAID_LIMIT} END RETURNING id`,[now(),now(),id,input.revision,input.hash,bounds.start,bounds.end,bounds.start,bounds.end]);
  check(rows.length===1,'最終版または処理状態が変わりました。再投稿せず確認してください',409);
  await this.run("INSERT INTO audit(article_id,action,actor,revision,hash) VALUES(?,'retry_queued','owner',?,?)",[id,a.revision,a.hash]);return this.get(id);
  }

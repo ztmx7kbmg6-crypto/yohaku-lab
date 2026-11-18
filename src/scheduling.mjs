@@ -1,4 +1,4 @@
-export const DAILY_LIMIT=3,MIN_GAP=7200000;
+export const FREE_LIMIT=1,PAID_LIMIT=2,DAILY_LIMIT=FREE_LIMIT+PAID_LIMIT,MIN_GAP=7200000;
 export const ACTIVE_STATUSES=['scheduled','preparing','prepared','uncertain','published'];
 export const ACTIVE_SQL="status IN('scheduled','preparing','prepared','uncertain','published')";
 export const TIME_SQL="CASE WHEN status='published' THEN COALESCE(scheduled_at,updated_at) ELSE scheduled_at END";
@@ -15,5 +15,34 @@ export function plans(date,count,reservations,clock=new Date()){
  function visit(next,chosen){if(chosen.length===count){const latest=chosen.map(p=>p.hi);for(let i=count-2;i>=0;i--)latest[i]=Math.min(latest[i],latest[i+1]-MIN_GAP);if(chosen.every((p,i)=>p.lo<=latest[i]))options.push(chosen.map((p,i)=>({...p,latest:latest[i]})));return;}for(let i=next;i<slots.length;i++){const slot=slots[i];for(const [lo,hi]of slot.segments)visit(i+1,[...chosen,{index:slot.index,start:slot.start,end:slot.end,lo,hi}]);}}
  visit(0,[]);return options;
 }
-export function planTimes(date,count,reservations,clock=new Date(),random=()=>crypto.getRandomValues(new Uint32Array(1))[0]/4294967296){const options=plans(date,count,reservations,clock);if(!options.length)return null;const chosen=options[Math.floor(random()*options.length)],result=[];for(const p of chosen){const lo=Math.max(p.lo,result.length?result.at(-1).ms+MIN_GAP:0),ms=lo+Math.floor(random()*(p.latest-lo+1));result.push({at:new Date(ms).toISOString(),ms,windowStart:new Date(p.start).toISOString(),windowEnd:new Date(p.end).toISOString()});}return result;}
-export function dateAvailability(date,reservations,clock=new Date()){const bounds=dayBounds(date);if(!bounds)return null;const used=reservations.filter(r=>r.at&&r.at>=bounds.start&&r.at<bounds.end).length;let maxSelectable=0;for(let n=1;n<=DAILY_LIMIT-used;n++)if(plans(date,n,reservations,clock).length)maxSelectable=n;return {date,used,remaining:Math.max(0,DAILY_LIMIT-used),maxSelectable,reason:used>=DAILY_LIMIT?'満枠':!maxSelectable?'予約できる時間枠なし':''};}
+export function planTimes(date,count,reservations,clock=new Date(),random=()=>crypto.getRandomValues(new Uint32Array(1))[0]/4294967296,firstAvailable=false){
+ const options=plans(date,count,reservations,clock);
+ if(!options.length)return null;
+ const chosen=firstAvailable?options[0]:options[Math.floor(random()*options.length)];
+ const result=[];
+ for(const slot of chosen){
+  const lower=Math.max(slot.lo,result.length?result.at(-1).ms+MIN_GAP:0);
+  const ms=lower+Math.floor(random()*(slot.latest-lower+1));
+  result.push({at:new Date(ms).toISOString(),ms,windowStart:new Date(slot.start).toISOString(),windowEnd:new Date(slot.end).toISOString()});
+ }
+ return result;
+}
+export function slotsUsed(bounds,reservations){
+ const day=reservations.filter(r=>r.at&&r.at>=bounds.start&&r.at<bounds.end);
+ return {used:day.length,free:day.filter(r=>r.price===0).length,paid:day.filter(r=>r.price===200).length};
+}
+export function fitsDailyQuota(used,prices){
+ const free=prices.filter(price=>price===0).length;
+ return used.used+prices.length<=DAILY_LIMIT&&used.free+free<=FREE_LIMIT&&used.paid+prices.length-free<=PAID_LIMIT;
+}
+export function dateAvailability(date,reservations,clock=new Date()){
+ const bounds=dayBounds(date);
+ if(!bounds)return null;
+ const used=slotsUsed(bounds,reservations);
+ const freeRemaining=Math.max(0,FREE_LIMIT-used.free),paidRemaining=Math.max(0,PAID_LIMIT-used.paid);
+ const remaining=Math.max(0,DAILY_LIMIT-used.used);
+ const candidates=Math.min(remaining,freeRemaining+paidRemaining);
+ let maxSelectable=0;
+ for(let n=1;n<=candidates;n++)if(plans(date,n,reservations,clock).length)maxSelectable=n;
+ return {date,used:used.used,remaining,freeRemaining,paidRemaining,maxSelectable,reason:!remaining?'満枠':!maxSelectable?'予約できる時間枠なし':''};
+}

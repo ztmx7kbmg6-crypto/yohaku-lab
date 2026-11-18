@@ -81,6 +81,8 @@ export async function api(req,env){
  await store.run('INSERT OR REPLACE INTO subscriptions(endpoint,payload) VALUES(?,?)',[s.endpoint,JSON.stringify(s)]);
  }else if(path==='/api/unsubscribe'){await store.run('DELETE FROM subscriptions WHERE endpoint=?',[input.endpoint]);}
  else {
+ const automatic=path.match(/^\/api\/articles\/([^/]+)\/approve-and-schedule$/);
+ if(automatic)return wrap(json(await store.approveAndSchedule(automatic[1],input)));
  const special=path.match(/^\/api\/articles\/([^/]+)\/(authorize-publication|revoke-publication)$/);
  if(special){result=special[2]==='authorize-publication'?await publication.authorize(special[1],input):await publication.revoke(special[1]);return wrap(json(result));}
  const m=path.match(/^\/api\/articles\/([^/]+)\/(edit|decide|comment|cancel|reschedule|recover|reconcile|retry)$/);if(!m)fail(404,'見つかりません');result=await store[m[2]](m[1],input);

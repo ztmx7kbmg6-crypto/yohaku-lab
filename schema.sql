@@ -77,3 +77,14 @@ BEGIN SELECT RAISE(ABORT,'separate cover required'); END;
 CREATE TRIGGER IF NOT EXISTS require_separate_cover_update BEFORE UPDATE ON articles
 WHEN NEW.status IN('approved','scheduled','preparing','prepared') AND (json_extract(NEW.cover,'$.id') IS NULL OR EXISTS(SELECT 1 FROM json_each(NEW.images) WHERE json_extract(value,'$.id')=json_extract(NEW.cover,'$.id')))
 BEGIN SELECT RAISE(ABORT,'separate cover required'); END;
+-- The owner action opts in by setting actor to owner-auto in its guarded reservation update.
+CREATE TRIGGER IF NOT EXISTS grant_publication_on_auto_approval
+AFTER UPDATE OF status ON articles
+WHEN NEW.actor='owner-auto' AND NEW.status='scheduled' AND OLD.status IN('draft','revision_requested','rejected','approved')
+BEGIN
+ INSERT INTO publication_permissions(article_id,revision,hash,granted_at)
+ VALUES(NEW.id,NEW.revision,NEW.hash,NEW.updated_at)
+ ON CONFLICT(article_id) DO UPDATE SET revision=excluded.revision,hash=excluded.hash,granted_at=excluded.granted_at;
+ INSERT INTO audit(article_id,action,actor,revision,hash)
+ VALUES(NEW.id,'publication_authorized','owner',NEW.revision,NEW.hash);
+END;
