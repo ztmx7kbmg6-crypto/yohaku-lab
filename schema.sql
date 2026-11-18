@@ -4,7 +4,7 @@ CREATE TABLE IF NOT EXISTS settings(id INTEGER PRIMARY KEY CHECK(id=1),paused IN
 INSERT OR IGNORE INTO settings(id) VALUES(1);
 CREATE TABLE IF NOT EXISTS articles(
  id TEXT PRIMARY KEY,title TEXT NOT NULL,body TEXT NOT NULL,price INTEGER NOT NULL CHECK(price IN(0,200)),
- paywall INTEGER NOT NULL DEFAULT 0 CHECK(paywall>=0),tags TEXT NOT NULL DEFAULT '[]',images TEXT NOT NULL DEFAULT '[]',sources TEXT NOT NULL DEFAULT '[]',
+ paywall INTEGER NOT NULL DEFAULT 0 CHECK(paywall>=0),tags TEXT NOT NULL DEFAULT '[]',images TEXT NOT NULL DEFAULT '[]',sources TEXT NOT NULL DEFAULT '[]',cover TEXT NOT NULL DEFAULT 'null',
  revision INTEGER NOT NULL DEFAULT 1,hash TEXT NOT NULL,
  status TEXT NOT NULL DEFAULT 'draft' CHECK(status IN('draft','revision_requested','rejected','approved','scheduled','preparing','prepared','failed','uncertain','published')),
  approved_hash TEXT,approved_revision INTEGER,scheduled_at TEXT,lease TEXT,lease_until TEXT,
@@ -12,14 +12,14 @@ CREATE TABLE IF NOT EXISTS articles(
  CHECK(approved_hash IS NULL OR (approved_hash=hash AND approved_revision=revision)),
  CHECK(status NOT IN('approved','scheduled','preparing','prepared','published') OR approved_hash=hash)
 );
-CREATE TABLE IF NOT EXISTS revisions(article_id TEXT NOT NULL,revision INTEGER NOT NULL,title TEXT,body TEXT,price INTEGER,paywall INTEGER,tags TEXT,hash TEXT,created_at TEXT,images TEXT NOT NULL DEFAULT '[]',sources TEXT NOT NULL DEFAULT '[]',PRIMARY KEY(article_id,revision));
+CREATE TABLE IF NOT EXISTS revisions(article_id TEXT NOT NULL,revision INTEGER NOT NULL,title TEXT,body TEXT,price INTEGER,paywall INTEGER,tags TEXT,hash TEXT,created_at TEXT,images TEXT NOT NULL DEFAULT '[]',sources TEXT NOT NULL DEFAULT '[]',cover TEXT NOT NULL DEFAULT 'null',PRIMARY KEY(article_id,revision));
 CREATE TABLE IF NOT EXISTS audit(id INTEGER PRIMARY KEY AUTOINCREMENT,article_id TEXT,action TEXT NOT NULL,actor TEXT NOT NULL,revision INTEGER,hash TEXT,detail TEXT,created_at TEXT NOT NULL DEFAULT(strftime('%Y-%m-%dT%H:%M:%fZ','now')));
 CREATE TABLE IF NOT EXISTS comments(id INTEGER PRIMARY KEY AUTOINCREMENT,article_id TEXT NOT NULL REFERENCES articles(id),revision INTEGER NOT NULL,body TEXT NOT NULL,created_at TEXT NOT NULL DEFAULT(strftime('%Y-%m-%dT%H:%M:%fZ','now')));
 CREATE TABLE IF NOT EXISTS subscriptions(endpoint TEXT PRIMARY KEY,payload TEXT NOT NULL,created_at TEXT NOT NULL DEFAULT(strftime('%Y-%m-%dT%H:%M:%fZ','now')));
 CREATE TABLE IF NOT EXISTS notifications(id INTEGER PRIMARY KEY AUTOINCREMENT,article_id TEXT,kind TEXT NOT NULL,delivered INTEGER NOT NULL DEFAULT 0,attempts INTEGER NOT NULL DEFAULT 0,created_at TEXT NOT NULL DEFAULT(strftime('%Y-%m-%dT%H:%M:%fZ','now')));
 CREATE INDEX IF NOT EXISTS due_articles ON articles(status,scheduled_at);
 CREATE TRIGGER IF NOT EXISTS article_create AFTER INSERT ON articles BEGIN
- INSERT INTO revisions VALUES(NEW.id,NEW.revision,NEW.title,NEW.body,NEW.price,NEW.paywall,NEW.tags,NEW.hash,NEW.updated_at,NEW.images,NEW.sources);
+ INSERT INTO revisions VALUES(NEW.id,NEW.revision,NEW.title,NEW.body,NEW.price,NEW.paywall,NEW.tags,NEW.hash,NEW.updated_at,NEW.images,NEW.sources,NEW.cover);
  INSERT INTO audit(article_id,action,actor,revision,hash) VALUES(NEW.id,'created',NEW.actor,NEW.revision,NEW.hash);
  INSERT INTO notifications(article_id,kind) VALUES(NEW.id,'created');
 END;
@@ -28,7 +28,7 @@ CREATE TRIGGER IF NOT EXISTS article_change AFTER UPDATE ON articles BEGIN
  INSERT INTO notifications(article_id,kind) VALUES(NEW.id,CASE WHEN OLD.revision<>NEW.revision THEN 'revised' ELSE NEW.status END);
 END;
 CREATE TRIGGER IF NOT EXISTS article_revision AFTER UPDATE OF revision ON articles WHEN OLD.revision<>NEW.revision BEGIN
- INSERT INTO revisions VALUES(NEW.id,NEW.revision,NEW.title,NEW.body,NEW.price,NEW.paywall,NEW.tags,NEW.hash,NEW.updated_at,NEW.images,NEW.sources);
+ INSERT INTO revisions VALUES(NEW.id,NEW.revision,NEW.title,NEW.body,NEW.price,NEW.paywall,NEW.tags,NEW.hash,NEW.updated_at,NEW.images,NEW.sources,NEW.cover);
 END;
 CREATE TRIGGER IF NOT EXISTS settings_change AFTER UPDATE OF paused ON settings BEGIN
  INSERT INTO audit(action,actor,detail) VALUES('pause_changed','owner',CAST(NEW.paused AS TEXT));
@@ -70,3 +70,10 @@ BEGIN SELECT RAISE(ABORT,'image required'); END;
 CREATE TRIGGER IF NOT EXISTS require_images_update BEFORE UPDATE ON articles
 WHEN NEW.status IN('approved','scheduled','preparing','prepared','published') AND json_array_length(NEW.images)=0
 BEGIN SELECT RAISE(ABORT,'image required'); END;
+
+CREATE TRIGGER IF NOT EXISTS require_separate_cover_insert BEFORE INSERT ON articles
+WHEN NEW.status IN('approved','scheduled','preparing','prepared') AND (json_extract(NEW.cover,'$.id') IS NULL OR EXISTS(SELECT 1 FROM json_each(NEW.images) WHERE json_extract(value,'$.id')=json_extract(NEW.cover,'$.id')))
+BEGIN SELECT RAISE(ABORT,'separate cover required'); END;
+CREATE TRIGGER IF NOT EXISTS require_separate_cover_update BEFORE UPDATE ON articles
+WHEN NEW.status IN('approved','scheduled','preparing','prepared') AND (json_extract(NEW.cover,'$.id') IS NULL OR EXISTS(SELECT 1 FROM json_each(NEW.images) WHERE json_extract(value,'$.id')=json_extract(NEW.cover,'$.id')))
+BEGIN SELECT RAISE(ABORT,'separate cover required'); END;

@@ -1,12 +1,12 @@
-import {png} from '../media-fixture.mjs';
+import {png,coverPng} from '../media-fixture.mjs';
 import {test,expect} from '@playwright/test';
 
 test('選択した無料1本・有料2本の予約時刻が予定一覧に表示される',async({page,request})=>{
- const articles=[];const imageResponse=await request.post('/api/media',{data:{mime:'image/png',data:png.toString('base64')}});expect(imageResponse.ok()).toBeTruthy();const image=await imageResponse.json();
+ const articles=[];const imageResponse=await request.post('/api/media',{data:{mime:'image/png',data:png.toString('base64')}});expect(imageResponse.ok()).toBeTruthy();const image=await imageResponse.json();const coverResponse=await request.post('/api/media',{data:{mime:'image/png',data:coverPng.toString('base64')}});expect(coverResponse.ok()).toBeTruthy();const coverImage=await coverResponse.json();
  const create=async(price,index)=>{
-  const r=await request.post('/api/articles',{data:{title:`予約画面の検証 ${Date.now()}-${index}`,body:'無料の導入です。\n\nここから実践です。',price,paywall:price?10:0,tags:[],images:[{id:image.id,alt:'予約画面を検証する画像'}]}});
+  const r=await request.post('/api/articles',{data:{title:`予約画面の検証 ${Date.now()}-${index}`,body:'無料の導入です。\n\nここから実践です。',price,paywall:price?10:0,tags:[],images:[{id:image.id,alt:'予約画面を検証する画像'}],cover:{id:coverImage.id,alt:'別の見出し画像'}}});
   expect(r.ok()).toBeTruthy();const a=await r.json();articles.push(a);
-  const approve=await request.post(`/api/articles/${a.id}/decide`,{data:{decision:'approved',confirm:true,confirmImages:true,revision:a.revision,hash:a.hash}});expect(approve.ok()).toBeTruthy();
+  const approve=await request.post(`/api/articles/${a.id}/decide`,{data:{decision:'approved',confirm:true,confirmImages:true,confirmCover:true,revision:a.revision,hash:a.hash}});expect(approve.ok()).toBeTruthy();
  };
  try{
   for(const [i,price]of [0,200,200].entries())await create(price,i);

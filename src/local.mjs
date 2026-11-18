@@ -8,6 +8,7 @@ import {Store} from './core.mjs';
 const dir=resolve(process.env.STATE_DIR||'.state/local');await mkdir(dir,{recursive:true,mode:0o700});await chmod(dir,0o700);
 const db=database(resolve(dir,'yohaku.sqlite'));db.raw.exec(await readFile('schema.sql','utf8'));
 if(!db.raw.prepare('PRAGMA table_info(articles)').all().some(c=>c.name==='images'))db.raw.exec(await readFile('media-schema.sql','utf8'));
+if(!db.raw.prepare('PRAGMA table_info(articles)').all().some(c=>c.name==='cover'))db.raw.exec(await readFile('cover-schema.sql','utf8'));
 await chmod(resolve(dir,'yohaku.sqlite'),0o600);
 const port=Number(process.env.PORT||4173),base=`http://127.0.0.1:${port}`;
 const env={DB:db,LOCAL:true,UI_ORIGIN:base,MACHINE_TOKEN:process.env.MACHINE_TOKEN,VAPID_PUBLIC_KEY:process.env.VAPID_PUBLIC_KEY};

@@ -15,7 +15,7 @@ export class Publication {
  async begin(id,input){
  requireThat(this.enabled,'実noteの接続検証が未完了のため本番投稿は停止中です',503);
  requireThat(typeof input.noteKey==='string'&&/^n[a-z0-9]+$/.test(input.noteKey),'note下書きIDが不正です',400);
- const final=await content(storedContent(await this.store.get(id)));await this.store.checkMedia(final,true);requireThat(input.coverId===final.images[0].id,'承認した1枚目の見出し画像の設定を確認してください');
+ const final=await content(storedContent(await this.store.get(id)));await this.store.checkMedia(final,true);requireThat(input.coverId===final.cover.id,'承認した本文とは別の見出し画像の設定を確認してください');
  const nonce=crypto.randomUUID(),at=now(),expires=new Date(Date.now()+10000).toISOString();
  const rows=await this.store.all(`INSERT INTO publication_attempts(article_id,revision,hash,note_key,nonce,stage,started_at,expires_at)
  SELECT a.id,a.revision,a.hash,?,?, 'armed',?,? FROM articles a JOIN publication_permissions p ON p.article_id=a.id AND p.revision=a.revision AND p.hash=a.hash JOIN note_drafts d ON d.article_id=a.id AND d.hash=a.hash AND d.revision=a.revision AND d.note_key=?

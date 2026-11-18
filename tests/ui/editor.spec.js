@@ -1,11 +1,11 @@
-import {png} from '../media-fixture.mjs';
+import {png,coverPng} from '../media-fixture.mjs';
 
 import {test,expect} from '@playwright/test';
 test('スマホで最終版承認、編集による失効、コメント、履歴、XSS',async({page})=>{
  const errors=[];page.on('pageerror',e=>errors.push(e.message));await page.goto('/');await expect(page.getByText('公開しないテスト運用')).toBeVisible();
  await page.getByRole('button',{name:'＋ 記事をつくる'}).click({trial:true});
  page.once('dialog',d=>d.accept('テスト用の記事 <img src=x onerror=alert(1)>'));await page.getByRole('button',{name:'＋ 記事をつくる'}).click();
- await expect(page.locator('#editor')).toBeVisible();await page.locator('#edit-body').fill('## 安全な原稿\n\nスマホから本文を読み、確認します。\n\n<script>alert(1)</script>');await page.locator('#edit-sources').fill('公式ヘルプ | https://support.microsoft.com/ja-jp/outlook/best-practices-for-outlook');await page.locator('#image-files').setInputFiles({name:'接続テスト.png',mimeType:'image/png',buffer:png});await expect(page.locator('#edit-images img')).toHaveCount(1);await page.getByRole('button',{name:'修正を保存'}).click();
+ await expect(page.locator('#editor')).toBeVisible();await page.locator('#edit-body').fill('## 安全な原稿\n\nスマホから本文を読み、確認します。\n\n<script>alert(1)</script>');await page.locator('#edit-sources').fill('公式ヘルプ | https://support.microsoft.com/ja-jp/outlook/best-practices-for-outlook');await page.locator('#cover-file').setInputFiles({name:'明るい見出し.png',mimeType:'image/png',buffer:coverPng});await expect(page.locator('#edit-cover img')).toHaveCount(1);await page.locator('#image-files').setInputFiles({name:'接続テスト.png',mimeType:'image/png',buffer:png});await expect(page.locator('#edit-images img')).toHaveCount(1);await page.getByRole('button',{name:'修正を保存'}).click();
  await expect(page.locator('#preview')).toBeVisible();await expect(page.locator('#preview .article-gallery figure img')).toHaveCount(1);await expect(page.locator('#preview .cover-preview img')).toHaveCount(1);await expect(page.getByRole('link',{name:'公式ヘルプ ↗',exact:true})).toHaveAttribute('href','https://support.microsoft.com/ja-jp/outlook/best-practices-for-outlook');await expect(page.locator('#approve')).toBeDisabled();await expect(page.locator('#preview script')).toHaveCount(0);
  await page.locator('#confirm-final').check();await page.locator('#approve').click();await expect(page.locator('#preview .pill').first()).toContainText('承認済み');
  await page.locator('#comment-body').fill('具体例を追加してください');await page.getByRole('button',{name:'修正を依頼'}).click();await expect(page.locator('#preview .pill').first()).toContainText('修正待ち');await expect(page.locator('#comments')).toContainText('具体例を追加');

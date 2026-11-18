@@ -1,5 +1,5 @@
 import {content,storedContent} from './core.mjs';
-export const notePolicy={aiTraining:false,translation:false,refunds:true,headerImage:'first-image'};
+export const notePolicy={aiTraining:false,translation:false,refunds:true,headerImage:'separate-cover'};
 const assert=(ok,msg)=>{if(!ok)throw Error(msg)};
 const lines=text=>text.split(/\n+/).map(x=>x.trim()).filter(Boolean);
 async function toggle(page,label,value){const control=page.getByRole('switch',{name:label,exact:true});assert(await control.count()===1,'noteの設定項目が変わりました: '+label);if(await control.getAttribute('aria-checked')!==String(value))await control.click();assert(await control.getAttribute('aria-checked')===String(value),'noteの設定確認に失敗: '+label)}
@@ -14,7 +14,7 @@ async function waitForHeaderImage(page){await page.locator('main img[alt="eyecat
 export function publicationText(article){const a=storedContent(article);return a.body+(a.sources.length?'\n\n参考URL\n\n'+a.sources.map(s=>s.title+'\n'+s.url).join('\n\n'):'')}
 export async function prepareNote(page,article,{onDraft=async()=>{},reuseTestNoteKey=null,loadImage}={}){
  const canonical=await content(storedContent(article));assert(canonical.hash===article.hash&&article.hash===article.approved_hash&&article.revision===article.approved_revision,'最終版の承認が一致しません');
- assert(canonical.images.length>0,'記事には画像を最低1枚付けてください');
+ assert(canonical.images.length>0,'記事には本文画像を最低1枚付けてください');assert(canonical.cover,'本文とは別の見出し画像を設定してください');
  const paragraphs=lines(publicationText(article));let boundary=0;
  if(article.price){assert(article.paywall>0&&article.body[article.paywall-1]==='\n','有料部分は段落の先頭から指定してください');boundary=lines(article.body.slice(0,article.paywall)).length;assert(boundary>0&&boundary<paragraphs.length,'有料部分が本文にありません')}
  await page.goto('https://note.com/firm_orchid8992');await page.getByRole('link',{name:'新規投稿',exact:true}).waitFor();
@@ -23,8 +23,9 @@ export async function prepareNote(page,article,{onDraft=async()=>{},reuseTestNot
  const helper=page.getByRole('dialog');if(await helper.count())await helper.getByRole('button',{name:'閉じる',exact:true}).click();
  await page.getByRole('textbox',{name:'記事タイトル',exact:true}).fill(article.title);const editor=page.getByRole('textbox').nth(1);assert(await editor.locator('img').count()===0,'既存画像のある下書きは自動で上書きしません');await editor.fill(publicationText(article)+'\n');
  assert(typeof loadImage==='function','画像の取得方法が未設定です');const uploads=[];
- for(const image of canonical.images){const data=await loadImage(image.id);const hash=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',data.buffer))).map(x=>x.toString(16).padStart(2,'0')).join('');assert(hash===image.id,'承認した画像とファイルが一致しません');assert(['image/png','image/jpeg','image/webp'].includes(data.mime),'画像形式が不正です');uploads.push({name:image.id+(data.mime==='image/png'?'.png':data.mime==='image/jpeg'?'.jpg':'.webp'),mimeType:data.mime,buffer:data.buffer});}
- const coverSrc=await setHeaderImage(page,uploads[0]);
+ async function upload(image){const data=await loadImage(image.id);const hash=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',data.buffer))).map(x=>x.toString(16).padStart(2,'0')).join('');assert(hash===image.id,'承認した画像とファイルが一致しません');assert(['image/png','image/jpeg','image/webp'].includes(data.mime),'画像形式が不正です');return {name:image.id+(data.mime==='image/png'?'.png':data.mime==='image/jpeg'?'.jpg':'.webp'),mimeType:data.mime,buffer:data.buffer};}
+ for(const image of canonical.images)uploads.push(await upload(image));
+ const coverSrc=await setHeaderImage(page,await upload(canonical.cover));
  await editor.press('ControlOrMeta+A');await editor.press('ArrowRight');await page.getByRole('button',{name:'メニューを開く',exact:true}).click();const bodyFiles=page.waitForEvent('filechooser');await page.getByRole('button',{name:'画像',exact:true}).click();await(await bodyFiles).setFiles(uploads);
  await editor.locator('img').nth(uploads.length-1).waitFor({timeout:60000});await page.waitForFunction(count=>{const editor=document.querySelector('[role="textbox"][contenteditable="true"]');const images=editor?.querySelectorAll('img');return images?.length===count&&Array.from(images).every(i=>i.complete&&i.naturalWidth>0)},uploads.length,{timeout:60000});
 
@@ -44,7 +45,7 @@ export async function prepareNote(page,article,{onDraft=async()=>{},reuseTestNot
  if(article.price){await toggle(page,'購入者の申請がnoteによる審査を通過すると、自動で返金されます。',true);await page.getByRole('button',{name:'有料エリア設定',exact:true}).click();await page.getByRole('heading',{name:article.title,exact:true}).waitFor();
  const actual=await page.getByRole('textbox').getByRole('paragraph').allTextContents();assert(JSON.stringify(actual.map(t=>t.trim()).filter(Boolean))===JSON.stringify(paragraphs),'有料境界画面の本文が一致しません');const controls=page.getByRole('textbox').getByRole('button');assert(await controls.count()>=actual.length,'noteの有料境界UIが変わりました');let seen=0,paidIndex=-1;for(let i=0;i<actual.length;i++){if(actual[i].trim()){if(seen===boundary){paidIndex=i;break;}seen++;}}assert(paidIndex>0,'有料部分の段落を確認できません');const chosen=page.getByRole('textbox').getByRole('paragraph').nth(paidIndex).locator('xpath=preceding::button[1]');assert(['このラインより先を有料にする','ラインをこの場所に変更'].includes(await chosen.innerText()),'有料部分の直前の境界を確認できません');await chosen.click();assert(await chosen.getAttribute('aria-pressed')==='true','有料境界を確認できません');}
  assert(await page.getByRole('button',{name:'投稿する',exact:true}).count()===1,'投稿確認画面に到達できません');
- return {noteKey,hash:article.hash,revision:article.revision,price:article.price,boundary,images:canonical.images.map(i=>i.id),coverImage:canonical.images[0].id,coverSrc:storedCover,policy:notePolicy,preparedAt:new Date().toISOString()};
+ return {noteKey,hash:article.hash,revision:article.revision,price:article.price,boundary,images:canonical.images.map(i=>i.id),coverImage:canonical.cover.id,coverSrc:storedCover,policy:notePolicy,preparedAt:new Date().toISOString()};
 }
 export async function verifyPublicArticle(browser,url,title){
  assert(/^https:\/\/note\.com\/firm_orchid8992\/n\/n[a-z0-9]+$/.test(url),'公開URLの形式が不正です');
@@ -53,8 +54,8 @@ export async function verifyPublicArticle(browser,url,title){
 }
 export async function publishPrepared(page,article,receipt,call){
  assert(receipt.hash===article.hash&&receipt.revision===article.revision,'確認済みの最終版ではありません');
- const images=storedContent(article).images;assert(images.length>0&&JSON.stringify(receipt.images)===JSON.stringify(images.map(i=>i.id)),'確認済みの画像が一致しません');
- assert(receipt.coverImage===images[0].id,'承認した1枚目の見出し画像を確認できません');
+ const {images,cover}=storedContent(article);assert(images.length>0&&JSON.stringify(receipt.images)===JSON.stringify(images.map(i=>i.id)),'確認済みの画像が一致しません');
+ assert(cover&&receipt.coverImage===cover.id,'承認した本文とは別の見出し画像を確認できません');
  const permit=await call('publication/begin',{id:article.id,lease:article.lease,hash:article.hash,revision:article.revision,noteKey:receipt.noteKey,coverId:receipt.coverImage});
  // No retries after consuming a permit, including network failure or an unknown click result.
  try{await call('publication/attempt',{id:article.id,lease:article.lease,nonce:permit.nonce});assert(Date.now()<Date.parse(permit.expiresAt),'公開許可の期限が切れました');try{await page.getByRole('button',{name:'投稿する',exact:true}).click({timeout:5000})}catch{/* A timeout may still mean the click was sent: verify, never click twice. */}
