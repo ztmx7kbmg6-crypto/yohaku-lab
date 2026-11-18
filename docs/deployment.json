@@ -2,7 +2,7 @@
   "repository": "https://github.com/ztmx7kbmg6-crypto/yohaku-lab",
   "ui": "https://ztmx7kbmg6-crypto.github.io/yohaku-lab/",
   "api": "https://yohaku-lab-api.yohaku-lab-yuto.workers.dev",
-  "sourceCommit": "bfc79e51f807411aae5b8de631bcd6f3472df559",
-  "siteCommit": "e68537459f86bd138d3cf46a18c4b9c78621b5b6",
-  "authSetupPending": true
+  "sourceCommit": "18f5e309dc485bf1fde101e07e49c9c6cbb27749",
+  "siteCommit": "a2cb0cad0bf459bfea8741f9b05cba796d653377",
+  "authSetupPending": false
 }
