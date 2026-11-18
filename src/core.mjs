@@ -72,8 +72,17 @@ export class Store {
  const r=await this.all(`UPDATE articles SET scheduled_at=?,actor='owner',updated_at=? WHERE id=? AND revision=? AND status='scheduled' AND approved_hash=hash AND NOT EXISTS(SELECT 1 FROM articles WHERE id<>? AND status IN('scheduled','preparing','prepared') AND ABS(julianday(scheduled_at)-julianday(?))*24<2) RETURNING id`,[t.toISOString(),now(),id,input.revision,id,t.toISOString()]);check(r.length,'予約変更できません。承認・間隔を確認してください',409);return this.get(id);
  }
  async cancel(id){const r=await this.all(`UPDATE articles SET status='approved',scheduled_at=NULL,actor='owner',updated_at=? WHERE id=? AND status='scheduled' RETURNING id`,[now(),id]);check(r.length,'予約を停止できません。処理状態を確認してください',409);return this.get(id);}
+ async retryable(id){return !!await this.one(`SELECT a.id FROM articles a JOIN publication_permissions p ON p.article_id=a.id AND p.revision=a.revision AND p.hash=a.hash WHERE a.id=? AND a.status='failed' AND a.approved_hash=a.hash AND a.approved_revision=a.revision AND a.public_url IS NULL AND a.lease IS NULL AND json_array_length(a.images)>0 AND NOT EXISTS(SELECT 1 FROM note_drafts WHERE article_id=a.id) AND NOT EXISTS(SELECT 1 FROM publication_attempts WHERE article_id=a.id) AND NOT EXISTS(SELECT 1 FROM publication_attempt_history WHERE article_id=a.id)`,[id]);}
+ async retry(id,input){
+ check(input.confirm===true,'承認した最終版を今すぐ投稿する明示確認が必要です');
+ const a=await this.get(id);await this.checkMedia(await content(storedContent(a)),true);
+ check(await this.retryable(id),'noteの処理履歴があるか、最終版の承認・公開許可が変わっています。再投稿せず確認してください',409);
+ const rows=await this.all(`UPDATE articles SET status='scheduled',scheduled_at=?,error=NULL,actor='owner',updated_at=? WHERE id=? AND revision=? AND hash=? AND status='failed' AND approved_hash=hash AND approved_revision=revision AND public_url IS NULL AND lease IS NULL AND EXISTS(SELECT 1 FROM publication_permissions p WHERE p.article_id=articles.id AND p.hash=articles.hash AND p.revision=articles.revision) AND NOT EXISTS(SELECT 1 FROM note_drafts WHERE article_id=articles.id) AND NOT EXISTS(SELECT 1 FROM publication_attempts WHERE article_id=articles.id) AND NOT EXISTS(SELECT 1 FROM publication_attempt_history WHERE article_id=articles.id) RETURNING id`,[now(),now(),id,input.revision,input.hash]);
+ check(rows.length===1,'最終版または処理状態が変わりました。再投稿せず確認してください',409);
+ await this.run("INSERT INTO audit(article_id,action,actor,revision,hash) VALUES(?,'retry_queued','owner',?,?)",[id,a.revision,a.hash]);return this.get(id);
+ }
  async comment(id,input){const a=await this.get(id);check(input.revision===a.revision,'記事が更新されています',409);check(typeof input.body==='string'&&input.body.trim()&&input.body.length<=4000,'コメントは1〜4000文字です');await this.run('INSERT INTO comments(article_id,revision,body) VALUES(?,?,?)',[id,a.revision,input.body]);}
- async detail(id){return {article:await this.get(id),publication:await this.one('SELECT revision,hash,granted_at FROM publication_permissions WHERE article_id=?',[id]),noteDraft:await this.one('SELECT * FROM note_drafts WHERE article_id=?',[id]),comments:await this.all('SELECT * FROM comments WHERE article_id=? ORDER BY id',[id]),revisions:await this.all('SELECT * FROM revisions WHERE article_id=? ORDER BY revision DESC',[id])};}
+ async detail(id){return {article:await this.get(id),canRetry:await this.retryable(id),publication:await this.one('SELECT revision,hash,granted_at FROM publication_permissions WHERE article_id=?',[id]),noteDraft:await this.one('SELECT * FROM note_drafts WHERE article_id=?',[id]),comments:await this.all('SELECT * FROM comments WHERE article_id=? ORDER BY id',[id]),revisions:await this.all('SELECT * FROM revisions WHERE article_id=? ORDER BY revision DESC',[id])};}
  async pause(value){check(typeof value==='boolean','停止設定が不正です');await this.run('UPDATE settings SET paused=? WHERE id=1',[value?1:0]);}
  async claim(){
  await this.run('UPDATE settings SET heartbeat=? WHERE id=1',[now()]);
@@ -81,7 +90,7 @@ export class Store {
  await this.run(`UPDATE articles SET status='uncertain',error='処理が中断されました。note側の状態を確認して復旧してください',actor='agent',updated_at=? WHERE status='preparing' AND lease_until<?`,[now(),now()]);
  const lease=crypto.randomUUID();
  const rows=await this.all(`UPDATE articles SET status='preparing',lease=?,lease_until=?,actor='agent',updated_at=? WHERE id=(SELECT id FROM articles WHERE status='scheduled' AND scheduled_at<=? AND scheduled_at>=? AND approved_hash=hash AND approved_revision=revision AND json_array_length(images)>0 AND (SELECT paused FROM settings)=0 ORDER BY scheduled_at LIMIT 1) AND status='scheduled' RETURNING *`,[lease,new Date(Date.now()+300000).toISOString(),now(),now(),new Date(Date.now()-900000).toISOString()]);
- await this.run(`UPDATE articles SET status='failed',error='予定から15分以上経過したため自動処理を停止しました',actor='agent',updated_at=? WHERE status='scheduled' AND scheduled_at<?`,[now(),new Date(Date.now()-900000).toISOString()]);
+ await this.run(`UPDATE articles SET status='failed',error=CASE WHEN (SELECT paused FROM settings)=1 THEN '投稿処理が停止中のまま予定時刻から15分経過しました。承認済み版の再実行または予定の再設定が必要です' ELSE '予定から15分以上経過したため自動処理を停止しました' END,actor='agent',updated_at=? WHERE status='scheduled' AND scheduled_at<?`,[now(),new Date(Date.now()-900000).toISOString()]);
  return rows[0]||null;
  }
  async linkDraft(id,input){
@@ -95,8 +104,9 @@ export class Store {
  async reconcile(id,input){
  check(input.confirm===true,'noteで公開済みの確認が必要です');
  check(typeof input.url==='string'&&/^https:\/\/note\.com\/firm_orchid8992\/n\/n[a-zA-Z0-9]+$/.test(input.url),'余白ラボの公開記事URLを入力してください');
+ const attempt=await this.one('SELECT note_key,revision,hash FROM publication_attempts WHERE article_id=?',[id]);if(attempt)check(input.url==='https://note.com/firm_orchid8992/n/'+attempt.note_key,'公開操作の対象URLと一致しません。再投稿せず確認してください',409);
  const rows=await this.all(`UPDATE articles SET status='published',public_url=?,lease=NULL,lease_until=NULL,error=NULL,actor='owner-manual',updated_at=? WHERE id=? AND revision=? AND hash=approved_hash AND revision=approved_revision AND status IN('approved','scheduled','prepared','uncertain','failed') AND NOT EXISTS(SELECT 1 FROM articles WHERE public_url=?) RETURNING id`,[input.url,now(),id,input.revision,input.url]);
- check(rows.length,'最終版の承認・状態・URLの重複を確認してください',409);return this.get(id);
+ check(rows.length,'最終版の承認・状態・URLの重複を確認してください',409);if(attempt)await this.run("UPDATE publication_attempts SET stage='confirmed' WHERE article_id=? AND hash=(SELECT hash FROM articles WHERE id=?) AND revision=(SELECT revision FROM articles WHERE id=?)",[id,id,id]);return this.get(id);
  }
  async recover(id,input){check(input.confirm===true,'note側の確認が必要です');const r=await this.all(`UPDATE articles SET status='draft',approved_hash=NULL,approved_revision=NULL,scheduled_at=NULL,lease=NULL,lease_until=NULL,error=NULL,actor='owner',updated_at=? WHERE id=? AND status IN('uncertain','failed','prepared') RETURNING id`,[now(),id]);check(r.length,'復旧対象ではありません',409);return this.get(id);}
 }

@@ -82,7 +82,7 @@ export async function api(req,env){
  else {
  const special=path.match(/^\/api\/articles\/([^/]+)\/(authorize-publication|revoke-publication)$/);
  if(special){result=special[2]==='authorize-publication'?await publication.authorize(special[1],input):await publication.revoke(special[1]);return wrap(json(result));}
- const m=path.match(/^\/api\/articles\/([^/]+)\/(edit|decide|comment|cancel|reschedule|recover|reconcile)$/);if(!m)fail(404,'見つかりません');result=await store[m[2]](m[1],input);
+ const m=path.match(/^\/api\/articles\/([^/]+)\/(edit|decide|comment|cancel|reschedule|recover|reconcile|retry)$/);if(!m)fail(404,'見つかりません');result=await store[m[2]](m[1],input);
  }
  }else fail(405,'対応していない操作です');
  if(result&&Array.isArray(result.articles))result.liveEnabled=env.NOTE_LIVE_ENABLED==='true';

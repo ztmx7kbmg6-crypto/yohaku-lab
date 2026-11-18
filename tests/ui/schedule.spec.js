@@ -27,9 +27,9 @@ test('選択した無料1本・有料2本の予約時刻が予定一覧に表示
   await expect(page.locator('#schedule-select input:checked')).toHaveCount(0);
   const s=await response.json();const scheduled=s.articles.filter(a=>articles.some(t=>t.id===a.id));
   expect(scheduled.every(a=>a.status==='scheduled'&&a.scheduled_at)).toBeTruthy();
-  expect(s.settings.paused).toBe(1);await page.getByRole('button',{name:'記事',exact:true}).click();await page.getByRole('tab',{name:/予約済み/}).click();await expect(page.locator('.card')).toHaveCount(3);for(const a of articles)await expect(page.locator('#article-list')).toContainText(a.title);expect(errors).toEqual([]);
+  expect(s.settings.paused).toBe(1);await expect(page.locator('#schedule-status')).toContainText('停止中');await page.getByRole('button',{name:'予約投稿を開始',exact:true}).click();await expect(page.locator('#schedule-status')).toContainText('稼働中');expect((await (await request.get('/api/state')).json()).settings.paused).toBe(0);await page.getByRole('button',{name:'記事',exact:true}).click();await page.getByRole('tab',{name:/予約済み/}).click();await expect(page.locator('.card')).toHaveCount(3);for(const a of articles)await expect(page.locator('#article-list')).toContainText(a.title);expect(errors).toEqual([]);
  }finally{
-  const response=await request.get('/api/state');const state=await response.json();
+  await request.post('/api/pause',{data:{paused:true}});const response=await request.get('/api/state');const state=await response.json();
   for(const a of state.articles.filter(a=>articles.some(t=>t.id===a.id))){
    if(a.status==='scheduled')await request.post(`/api/articles/${a.id}/cancel`,{data:{}});
    await request.post(`/api/articles/${a.id}/decide`,{data:{decision:'rejected',revision:a.revision,hash:a.hash}});

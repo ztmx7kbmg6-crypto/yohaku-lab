@@ -39,7 +39,7 @@ export async function prepareNote(page,article,{onDraft=async()=>{},reuseTestNot
 export async function verifyPublicArticle(browser,url,title){
  assert(/^https:\/\/note\.com\/firm_orchid8992\/n\/n[a-z0-9]+$/.test(url),'公開URLの形式が不正です');
  const anonymous=await browser.newContext({storageState:{cookies:[],origins:[]}});
- try{const p=await anonymous.newPage(),r=await p.goto(url,{timeout:30000});assert(r?.status()===200,'未ログインで公開記事を確認できません');await p.getByRole('heading',{name:title,exact:true}).waitFor({timeout:20000});assert(new URL(p.url()).origin+new URL(p.url()).pathname===url,'公開記事のURLが一致しません');return true;}finally{await anonymous.close()}
+ try{const p=await anonymous.newPage(),deadline=Date.now()+60000;for(let attempt=0;attempt<10&&Date.now()<deadline;attempt++){const r=await p.goto(url,{timeout:Math.max(1,Math.min(15000,deadline-Date.now())),waitUntil:'domcontentloaded'}),status=r?.status();if(status===200){await p.getByRole('heading',{name:title,exact:true}).waitFor({timeout:20000});assert(new URL(p.url()).origin+new URL(p.url()).pathname===url,'公開記事のURLが一致しません');return true;}assert(status===404,'公開確認が拒否または失敗しました（HTTP '+status+'）。再投稿せず確認してください');if(attempt<9&&Date.now()<deadline)await p.waitForTimeout(Math.min(8000,1000*2**attempt,deadline-Date.now()));}throw Error('公開URLへの反映を確認できません。再投稿せずnote側を確認してください');}finally{await anonymous.close()}
 }
 export async function publishPrepared(page,article,receipt,call){
  assert(receipt.hash===article.hash&&receipt.revision===article.revision,'確認済みの最終版ではありません');
