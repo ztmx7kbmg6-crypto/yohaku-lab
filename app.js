@@ -26,8 +26,8 @@ function render(){
  if(!filtered.length)list.append(el('p','empty','まだ記事がありません。原稿を追加すると、ここに表示されます。'));
  const checked=new Set(Array.from(document.querySelectorAll('#schedule-select input:checked'),i=>i.value)),select=$('#schedule-select');select.replaceChildren();for(const a of state.articles.filter(a=>a.status==='approved')){const label=el('label','checkbox'),box=el('input');box.type='checkbox';box.value=a.id;box.checked=checked.has(a.id);box.onchange=updateScheduleSelection;label.append(box,document.createTextNode(`${a.price?'200円':'無料'} ｜ ${a.title}`));select.append(label)}updateScheduleSelection();
  const timeline=$('#timeline');timeline.replaceChildren();for(const a of state.articles.filter(a=>a.scheduled_at).sort((a,b)=>a.scheduled_at.localeCompare(b.scheduled_at))){const row=el('div','timeline-item'),info=el('div','time-info');row.append(el('time','',fmt(a.scheduled_at)));info.append(el('h3','',a.title),el('span','pill',labels[a.status]));if(a.public_url){const link=el('a','','公開記事 ↗');link.href=a.public_url;info.append(link)}row.append(info);if(a.status==='scheduled'){const change=el('button','','日付を変更');change.onclick=()=>action(()=>openReschedule(a));const cancel=el('button','','予約を停止');cancel.onclick=()=>action(async()=>{await request(`/articles/${a.id}/cancel`,{});await refresh();toast('予約を停止しました')});row.append(change,cancel)}timeline.append(row)}
- const audit=$('#audit');audit.replaceChildren();for(const a of state.audit){const row=el('div','audit-row',`${labels[a.action]||a.action} ${a.revision?'· 第'+a.revision+'版':''}`);const title=state.articles.find(x=>x.id===a.article_id)?.title||'編集室';row.append(el('small','',`${title} ｜ ${fmt(a.created_at)} ｜ ${({'owner':'本人','owner-manual':'本人（公開URL記録）','generator':'AI','agent':'Macの処理','agent-publish':'Macの公開処理','sample':'動作確認'})[a.actor]||a.actor}`));audit.append(row)}
- $('#schedule-status').dataset.paused=String(!!state.settings.paused);$('#schedule-status-title').textContent=state.settings.paused?'予約は保存できますが、処理は停止中です':'予約処理は稼働中です';$('#schedule-status-message').textContent=state.settings.paused?'予約時刻に処理するには開始ボタンを押してください。停止中に時刻が過ぎても、後から自動でまとめて投稿はしません。':'Macが予約時刻を確認して処理します。承認と公開許可は記事ごとに必要です。';$('#schedule-resume').hidden=!state.settings.paused;
+ const audit=$('#audit');audit.replaceChildren();for(const a of state.audit){const row=el('div','audit-row',`${labels[a.action]||a.action} ${a.revision?'· 第'+a.revision+'版':''}`);const title=state.articles.find(x=>x.id===a.article_id)?.title||'編集室';row.append(el('small','',`${title} ｜ ${fmt(a.created_at)} ｜ ${({'owner':'本人','owner-auto':'本人','owner-manual':'本人（公開URL記録）','generator':'AI','agent':'Macの処理','agent-publish':'Macの公開処理','sample':'動作確認'})[a.actor]||a.actor}`));audit.append(row)}
+ $('#schedule-status').dataset.paused=String(!!state.settings.paused);$('#schedule-status-title').textContent=state.settings.paused?'予約は保存できますが、処理は停止中です':'予約処理は稼働中です';$('#schedule-status-message').textContent=state.settings.paused?'予約時刻に処理するには開始ボタンを押してください。停止中に時刻が過ぎても、後から自動でまとめて投稿はしません。':'Macが予約時刻を確認して処理します。承認した記事は次の空き枠へ自動で入ります。';$('#schedule-resume').hidden=!state.settings.paused;
  $('#heartbeat').textContent=state.settings.heartbeat?'最終通信：'+fmt(state.settings.heartbeat):'まだMacの処理プロセスは接続されていません。';
 }
 function bodyNodes(text){const nodes=[];for(const block of text.split(/\n\n+/)){if(!block)continue;const heading=block.match(/^## (.*)$/s);const node=el(heading?'h2':'p');appendLinkedText(node,heading?heading[1]:block);nodes.push(node)}return nodes}
@@ -38,8 +38,9 @@ async function renderDetail(d){const a=d.article,p=$('#preview');$('#retry-contr
  const refs=arrayField(a,'sources');if(refs.length){const section=el('section','references');section.append(el('h2','','参考URL'));for(const source of refs)section.append(sourceLink(source.title,source.url));p.append(section)}
  if(coverField(a)){const artwork=coverField(a),cover=el('figure','cover-preview'),img=el('img');img.alt=artwork.alt;img.src=await mediaUrl(artwork.id);cover.append(img,el('figcaption','','見出し画像（本文とは別）'));p.prepend(cover)}p.append(gallery);
  const tags=JSON.parse(a.tags);p.append(el('p','muted',tags.map(t=>'#'+t).join('  ')));if(a.error)p.append(el('p','error-text',a.error));
- $('#authorize-publication').textContent=d.publication?.hash===a.hash?'この最終版は公開許可済み':'この最終版のnote公開を許可';$('#publication-consent').hidden=!['approved','scheduled'].includes(a.status);$('#published-url').value=a.public_url||'';$('#manual-record').hidden=!a.approved_hash||a.status==='published';
+ const permitted=d.publication?.hash===a.hash&&d.publication?.revision===a.revision;$('#authorize-publication').hidden=permitted;$('#revoke-publication').hidden=!permitted;$('#authorize-publication').textContent=permitted?'この最終版は公開許可済み':'この最終版のnote公開を許可';$('#publication-consent').hidden=!['approved','scheduled'].includes(a.status);$('#published-url').value=a.public_url||'';$('#manual-record').hidden=!a.approved_hash||a.status==='published';
  $('#note-draft-link').replaceChildren();if(d.noteDraft?.revision===a.revision&&d.noteDraft?.hash===a.hash){const link=el('a','','noteでこの版の下書きを確認 ↗');link.href='https://editor.note.com/notes/'+d.noteDraft.note_key+'/edit/';link.target='_blank';link.rel='noreferrer';$('#note-draft-link').append(link);}
+ $('#approval-action').hidden=!['draft','revision_requested','rejected','approved'].includes(a.status);
  $('#revision-label').textContent=`第${a.revision}版 · ${a.hash.slice(0,8)}`;$('#confirm-final').checked=false;$('#confirm-final').disabled=!arrayField(a,'images').length||!coverField(a);$('#image-requirement').textContent=arrayField(a,'images').length&&coverField(a)?'見出し画像と本文画像を含む、この最終版を確認してください。':'承認するには、別の見出し画像1枚と本文画像1枚以上を追加してください。';$('#approve').disabled=true;const locked=['preparing','uncertain','published'].includes(a.status);$('#toggle-editor').disabled=locked;$('#review-controls').hidden=locked;$('#recover-controls').hidden=!['uncertain','failed','prepared'].includes(a.status);
  $('#comments').replaceChildren(...d.comments.map(c=>{const n=el('div','comment',c.body);n.append(el('small','',`第${c.revision}版 ｜ ${fmt(c.created_at)}`));return n}));
  $('#revisions').replaceChildren(...d.revisions.map(r=>{const n=el('details'),s=el('summary','',`第${r.revision}版 · ${r.price?'200円':'無料'} · ${fmt(r.created_at)}`);n.append(s,el('strong','',r.title),el('pre','',r.body),el('small','',`見出し ${coverField(r)?'あり':'なし'} / 本文画像 ${arrayField(r,'images').length}枚 / 参考URL ${arrayField(r,'sources').length}件 / 有料部分：${r.paywall}文字目 / ${r.hash.slice(0,12)}`));return n}));
@@ -56,9 +57,45 @@ $('#cover-file').onchange=()=>action(async()=>{const file=$('#cover-file').files
 $('#image-files').onchange=()=>action(async()=>{for(const file of $('#image-files').files){const image=await uploadImageFile(file);if(editingCover?.id===image.id)throw Error('本文には見出しとは別の画像を選んでください');editingImages.push(image)}$('#image-files').value='';await renderEditingImages();toast('本文画像を追加しました。説明を確認して修正を保存してください。')});
 
 
-function fillDateOptions(select,days,wanted,count=1){select.replaceChildren();const today=new Date().toLocaleDateString('sv-SE',{timeZone:'Asia/Tokyo'});for(const day of days){const d=new Date(day.date+'T12:00:00+09:00'),label=d.toLocaleDateString('ja-JP',{timeZone:'Asia/Tokyo',month:'numeric',day:'numeric',weekday:'short'}),option=el('option','',`${day.date===today?'今日 ':''}${label} ｜ ${day.used>=3?'満枠（3/3）':day.maxSelectable<count?(day.reason||'選んだ本数の時間枠なし'):`あと${day.maxSelectable}本`}`);option.value=day.date;option.disabled=day.maxSelectable<count;select.append(option)}if(wanted&&days.some(d=>d.date===wanted))select.value=wanted;else select.value=days.find(d=>d.maxSelectable>=count)?.date||'';}
-function updateScheduleSelection(){const boxes=Array.from(document.querySelectorAll('#schedule-select input')),selected=boxes.filter(b=>b.checked),count=selected.length,date=$('#schedule-date').value;for(const box of boxes)box.disabled=!box.checked&&count>=3;fillDateOptions($('#schedule-date'),availabilityDays,date,Math.max(1,count));const day=availabilityDays.find(d=>d.date===$('#schedule-date').value),valid=count>=1&&count<=3&&day&&day.maxSelectable>=count;$('#schedule-batch').disabled=!valid;$('#schedule-selection-status').textContent=count?`${count}本を選択中。${day?`この日の公開・予約は${day.used}/3本、追加できるのは${day.maxSelectable}本です。`: '予約できる日を選んでください。'}`:'承認済みの記事を1〜3本選んでください。';}
-async function openReschedule(article){rescheduling=article;const result=await request('/availability?exclude='+encodeURIComponent(article.id));$('#reschedule-title').textContent=article.title;fillDateOptions($('#reschedule-date'),result.days,new Date(article.scheduled_at).toLocaleDateString('sv-SE',{timeZone:'Asia/Tokyo'}));$('#reschedule-save').disabled=!$('#reschedule-date').value||$('#reschedule-date').selectedOptions[0]?.disabled;$('#reschedule-dialog').showModal();}
+function dateFits(day,prices){
+ const free=prices.filter(price=>price===0).length;
+ return day.maxSelectable>=Math.max(1,prices.length)&&day.freeRemaining>=free&&day.paidRemaining>=prices.length-free;
+}
+function fillDateOptions(select,days,wanted,prices=[]){
+ select.replaceChildren();
+ const today=new Date().toLocaleDateString('sv-SE',{timeZone:'Asia/Tokyo'});
+ for(const day of days){
+  const date=new Date(day.date+'T12:00:00+09:00');
+  const label=date.toLocaleDateString('ja-JP',{timeZone:'Asia/Tokyo',month:'numeric',day:'numeric',weekday:'short'});
+  const slots=day.reason||`無料あと${day.freeRemaining}本・200円あと${day.paidRemaining}本`;
+  const option=el('option','',`${day.date===today?'今日 ':''}${label} ｜ ${slots}`);
+  option.value=day.date;
+  option.disabled=!dateFits(day,prices);
+  select.append(option);
+ }
+ select.value=wanted&&days.some(day=>day.date===wanted)?wanted:days.find(day=>dateFits(day,prices))?.date||'';
+}
+function updateScheduleSelection(){
+ const boxes=Array.from(document.querySelectorAll('#schedule-select input'));
+ const selected=boxes.filter(box=>box.checked);
+ const prices=selected.map(box=>state.articles.find(article=>article.id===box.value).price);
+ const date=$('#schedule-date').value;
+ for(const box of boxes)box.disabled=!box.checked&&selected.length>=3;
+ fillDateOptions($('#schedule-date'),availabilityDays,date,prices);
+ const day=availabilityDays.find(day=>day.date===$('#schedule-date').value);
+ $('#schedule-batch').disabled=!prices.length||!day||!dateFits(day,prices);
+ $('#schedule-selection-status').textContent=prices.length
+  ?`${prices.length}本を選択中。${day?`空き枠は無料${day.freeRemaining}本・200円${day.paidRemaining}本です。`:'予定日を選んでください。'}`
+  :'承認済みの記事を選んでください。';
+}
+async function openReschedule(article){
+ rescheduling=article;
+ const result=await request('/availability?exclude='+encodeURIComponent(article.id));
+ $('#reschedule-title').textContent=article.title;
+ fillDateOptions($('#reschedule-date'),result.days,new Date(article.scheduled_at).toLocaleDateString('sv-SE',{timeZone:'Asia/Tokyo'}),[article.price]);
+ $('#reschedule-save').disabled=!$('#reschedule-date').value||$('#reschedule-date').selectedOptions[0]?.disabled;
+ $('#reschedule-dialog').showModal();
+}
 $('#close-reschedule').onclick=()=>$('#reschedule-dialog').close();
 $('#reschedule-date').onchange=()=>$('#reschedule-save').disabled=!$('#reschedule-date').value||$('#reschedule-date').selectedOptions[0]?.disabled;
 $('#reschedule-form').onsubmit=e=>{e.preventDefault();action(async()=>{if(!rescheduling)return;await request(`/articles/${rescheduling.id}/reschedule`,{date:$('#reschedule-date').value,revision:rescheduling.revision});$('#reschedule-dialog').close();await refresh();toast('予定日を変更し、時刻を自動で決定しました。')})};
@@ -68,8 +105,28 @@ $('#toggle-editor').onclick=()=>{const edit=$('#editor').hidden;$('#editor').hid
 $('#set-paywall').onclick=()=>{$('#edit-paywall').value=$('#edit-body').selectionStart;toast('有料部分の開始位置を設定しました')};
 $('#editor').onsubmit=e=>{e.preventDefault();action(async()=>{await request(`/articles/${current.id}/edit`,{title:$('#edit-title').value,body:$('#edit-body').value,price:Number($('#edit-price').value),paywall:Number($('#edit-paywall').value),tags:$('#edit-tags').value.split(',').map(t=>t.trim()).filter(Boolean),images:editingImages,cover:editingCover,sources:parseSources(),revision:current.revision});await refresh();await openArticle(current.id);toast('保存しました。承認・予約は失効しました')})};
 $('#confirm-final').onchange=()=>$('#approve').disabled=!$('#confirm-final').checked;
-async function decide(decision){if(!current)return;await request(`/articles/${current.id}/decide`,{decision,revision:current.revision,hash:current.hash,confirm:$('#confirm-final').checked,confirmImages:$('#confirm-final').checked,confirmCover:$('#confirm-final').checked});await refresh();await openArticle(current.id);toast(decision==='approved'?(state.liveEnabled?'この版を承認しました。note公開許可も確認してください。':'この版を承認しました。公開処理は無効です'):labels[decision]+'にしました')}
-$('#approve').onclick=()=>action(()=>decide('approved'));$('#reject').onclick=()=>action(()=>decide('rejected'));
+async function decide(decision){
+ if(!current)return;
+ const {id,revision,hash}=current;
+ await request(`/articles/${id}/decide`,{decision,revision,hash});
+ await refresh();
+ await openArticle(id);
+ toast(labels[decision]+'にしました');
+}
+async function approveAndSchedule(){
+ const {id,revision,hash,status,updated_at}=current;
+ const confirmed=$('#confirm-final').checked;
+ const article=await request(`/articles/${id}/approve-and-schedule`,{
+  revision,hash,expectedStatus:status,expectedUpdatedAt:updated_at,
+  confirm:confirmed,confirmImages:confirmed,confirmCover:confirmed,confirmPublication:confirmed
+ });
+ await refresh();
+ await openArticle(id);
+ const message=`承認しました。公開予定 ${fmt(article.scheduled_at)}（日本時間）。`;
+ toast(state.settings.paused?message+'投稿処理は停止中です。':message);
+}
+$('#approve').onclick=()=>action(approveAndSchedule);
+$('#reject').onclick=()=>action(()=>decide('rejected'));
 $('#request-revision').onclick=()=>action(async()=>{const body=$('#comment-body').value.trim();if(!body){$('#comment-body').focus();throw Error('下のコメント欄に修正内容を入力してください')}await request(`/articles/${current.id}/comment`,{body,revision:current.revision});$('#comment-body').value='';await decide('revision_requested')});
 $('#comment-form').onsubmit=e=>{e.preventDefault();action(async()=>{await request(`/articles/${current.id}/comment`,{body:$('#comment-body').value,revision:current.revision});$('#comment-body').value='';await openArticle(current.id);toast('コメントを記録しました')})};
 $('#authorize-publication').onclick=()=>action(async()=>{if(!confirm(`第${current.revision}版「${current.title}」（${current.price?current.price+'円':'無料'}）をnoteに公開することを許可しますか？修正すると失効します。`))return;await request(`/articles/${current.id}/authorize-publication`,{confirm:true,revision:current.revision,hash:current.hash});await openArticle(current.id);toast(state.liveEnabled?'公開許可を記録しました。予約と処理の再開で、指定時刻に投稿されます。':'公開許可を記録しました。公開処理は停止中です。')});
