@@ -1,11 +1,12 @@
+import {png} from '../media-fixture.mjs';
 import {test,expect} from '@playwright/test';
 
 test('選択した無料1本・有料2本の予約時刻が予定一覧に表示される',async({page,request})=>{
- const articles=[];
+ const articles=[];const imageResponse=await request.post('/api/media',{data:{mime:'image/png',data:png.toString('base64')}});expect(imageResponse.ok()).toBeTruthy();const image=await imageResponse.json();
  const create=async(price,index)=>{
-  const r=await request.post('/api/articles',{data:{title:`予約画面の検証 ${Date.now()}-${index}`,body:'無料の導入です。\n\nここから実践です。',price,paywall:price?10:0,tags:[]}});
+  const r=await request.post('/api/articles',{data:{title:`予約画面の検証 ${Date.now()}-${index}`,body:'無料の導入です。\n\nここから実践です。',price,paywall:price?10:0,tags:[],images:[{id:image.id,alt:'予約画面を検証する画像'}]}});
   expect(r.ok()).toBeTruthy();const a=await r.json();articles.push(a);
-  const approve=await request.post(`/api/articles/${a.id}/decide`,{data:{decision:'approved',confirm:true,revision:a.revision,hash:a.hash}});expect(approve.ok()).toBeTruthy();
+  const approve=await request.post(`/api/articles/${a.id}/decide`,{data:{decision:'approved',confirm:true,confirmImages:true,revision:a.revision,hash:a.hash}});expect(approve.ok()).toBeTruthy();
  };
  try{
   for(const [i,price]of [0,200,200].entries())await create(price,i);
@@ -26,7 +27,7 @@ test('選択した無料1本・有料2本の予約時刻が予定一覧に表示
   await expect(page.locator('#schedule-select input:checked')).toHaveCount(0);
   const s=await response.json();const scheduled=s.articles.filter(a=>articles.some(t=>t.id===a.id));
   expect(scheduled.every(a=>a.status==='scheduled'&&a.scheduled_at)).toBeTruthy();
-  expect(s.settings.paused).toBe(1);expect(errors).toEqual([]);
+  expect(s.settings.paused).toBe(1);await page.getByRole('button',{name:'記事',exact:true}).click();await page.getByRole('tab',{name:/予約済み/}).click();await expect(page.locator('.card')).toHaveCount(3);for(const a of articles)await expect(page.locator('#article-list')).toContainText(a.title);expect(errors).toEqual([]);
  }finally{
   const response=await request.get('/api/state');const state=await response.json();
   for(const a of state.articles.filter(a=>articles.some(t=>t.id===a.id))){

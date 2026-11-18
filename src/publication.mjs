@@ -1,10 +1,11 @@
-import {Problem,now} from './core.mjs';
+import {Problem,now,content,storedContent} from './core.mjs';
 const requireThat=(ok,msg,status=409)=>{if(!ok)throw new Problem(msg,status)};
 // The only live-publication gate. Disabled unless the deployed environment explicitly enables it.
 export class Publication {
  constructor(store,{enabled=false}={}){this.store=store;this.enabled=enabled}
  async authorize(id,input){
  requireThat(input.confirm===true,'この最終版をnoteに公開する明示確認が必要です',400);
+ await this.store.checkMedia(await content(storedContent(await this.store.get(id))),true);
  const rows=await this.store.all(`INSERT INTO publication_permissions(article_id,revision,hash,granted_at) SELECT id,revision,hash,? FROM articles WHERE id=? AND revision=? AND hash=? AND approved_hash=hash AND approved_revision=revision AND status IN('approved','scheduled') ON CONFLICT(article_id) DO UPDATE SET revision=excluded.revision,hash=excluded.hash,granted_at=excluded.granted_at RETURNING article_id`,[now(),id,input.revision,input.hash]);
  requireThat(rows.length===1,'承認した最終版が変わっています');
  await this.store.run(`INSERT INTO audit(article_id,action,actor,revision,hash) VALUES(?,'publication_authorized','owner',?,?)`,[id,input.revision,input.hash]);
@@ -14,6 +15,7 @@ export class Publication {
  async begin(id,input){
  requireThat(this.enabled,'実noteの接続検証が未完了のため本番投稿は停止中です',503);
  requireThat(typeof input.noteKey==='string'&&/^n[a-z0-9]+$/.test(input.noteKey),'note下書きIDが不正です',400);
+ await this.store.checkMedia(await content(storedContent(await this.store.get(id))),true);
  const nonce=crypto.randomUUID(),at=now(),expires=new Date(Date.now()+10000).toISOString();
  const rows=await this.store.all(`INSERT INTO publication_attempts(article_id,revision,hash,note_key,nonce,stage,started_at,expires_at)
  SELECT a.id,a.revision,a.hash,?,?, 'armed',?,? FROM articles a JOIN publication_permissions p ON p.article_id=a.id AND p.revision=a.revision AND p.hash=a.hash JOIN note_drafts d ON d.article_id=a.id AND d.hash=a.hash AND d.revision=a.revision AND d.note_key=?

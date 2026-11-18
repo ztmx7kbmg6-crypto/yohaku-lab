@@ -3,6 +3,7 @@ import {Store,Problem} from './core.mjs';
 import {accessUser} from './access.mjs';
 import {Publication} from './publication.mjs';
 import {cardlessAuth,cardlessUser} from './cardless.mjs';
+import {saveMedia,readMedia} from './media.mjs';
 const json=(v,status=200)=>Response.json(v===undefined?{ok:true}:v,{status,headers:{'Cache-Control':'no-store'}});
 const fail=(s,msg)=>{throw new Problem(msg,s)};
 async function equal(a,b){if(!a||!b)return false;const hash=s=>crypto.subtle.digest('SHA-256',new TextEncoder().encode(s));const [x,y]=await Promise.all([hash(a),hash(b)]);return new Uint8Array(x).every((v,i)=>v===new Uint8Array(y)[i]);}
@@ -21,7 +22,7 @@ export async function api(req,env){
  if(origin&&origin!==allowed)fail(403,'許可されていないアクセス元です');
  if(req.method==='OPTIONS')return new Response(null,{headers});
  if(req.method==='POST'&&!req.headers.get('Content-Type')?.startsWith('application/json'))fail(415,'JSONが必要です');
- const text=req.method==='POST'?await req.text():'';if(text.length>150000)fail(413,'データが大きすぎます');
+ const text=req.method==='POST'?await req.text():'';if(text.length>((path==='/api/media'||path==='/api/machine/media')?1400000:150000))fail(413,'データが大きすぎます');
  let input={};try{if(text)input=JSON.parse(text)}catch{fail(400,'JSONが不正です')}
  const token=req.headers.get('Authorization')?.replace(/^Bearer /,'');
  const machine=path.startsWith('/api/machine/');
@@ -45,6 +46,9 @@ export async function api(req,env){
  if(machine){if(!await equal(token,env.MACHINE_TOKEN))fail(401,'Macの認証が必要です');}
  else if(!env.LOCAL)await user(token,env);
  const store=new Store(env.DB),publication=new Publication(store,{enabled:env.NOTE_LIVE_ENABLED==='true'});let result;
+ const mediaPath=path.match(/^\/api\/(?:machine\/)?media\/([a-f0-9]{64})$/);
+ if(req.method==='GET'&&mediaPath)return wrap(await readMedia(store,mediaPath[1]));
+ if(req.method==='POST'&&(path==='/api/media'||path==='/api/machine/media'))return wrap(json(await saveMedia(store,input)));
  if(req.method==='GET'&&!machine){
  if(path==='/api/state')result=await store.snapshot();
  else if(/^\/api\/articles\/[^/]+$/.test(path))result=await store.detail(path.split('/').at(-1));

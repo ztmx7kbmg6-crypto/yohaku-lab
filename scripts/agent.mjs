@@ -1,6 +1,6 @@
 
 import {chromium} from '@playwright/test';
-import {content} from '../src/core.mjs';
+import {content,storedContent} from '../src/core.mjs';
 import {prepareNote,publishPrepared} from '../src/note-adapter.mjs';
 import {access} from 'node:fs/promises';
 import webpush from 'web-push';
@@ -20,7 +20,7 @@ let lock;try{lock=await open('.state/agent.lock','wx',0o600)}catch{throw Error('
 await lock.writeFile(String(process.pid));
 async function dryrun(article){
  const {hash,approved_hash,revision,approved_revision}=article;
- const canonical=await content({...article,tags:JSON.parse(article.tags)});if(canonical.hash!==hash)throw Error('原稿ハッシュが一致しません');
+ const canonical=await content(storedContent(article));if(canonical.hash!==hash)throw Error('原稿ハッシュが一致しません');
  if(hash!==approved_hash||revision!==approved_revision)throw Error('承認した最終版と一致しません');
  const browser=await chromium.launch({headless:true,channel:process.env.BROWSER_CHANNEL||'chrome'});
  try{
@@ -55,7 +55,7 @@ try{
    else{
     context=await chromium.launchPersistentContext(resolve('.auth/note-profile'),{headless:false,channel:process.env.BROWSER_CHANNEL||'chrome'});
     const page=await context.newPage(),dir=resolve('artifacts',article.id+'-r'+article.revision);await mkdir(dir,{recursive:true,mode:0o700});
-    const receipt=await prepareNote(page,article,{onDraft:async noteKey=>{await writeFile(resolve(dir,'note-draft.json'),JSON.stringify({noteKey,id:article.id,revision:article.revision,hash:article.hash}),{mode:0o600});await call('draft-linked',{id:article.id,lease:article.lease,noteKey});}});
+    const receipt=await prepareNote(page,article,{loadImage:async id=>{const response=await fetch(base+'/api/machine/media/'+id,{headers,signal:AbortSignal.timeout(20000)});if(!response.ok)throw Error('画像データを取得できません');return {buffer:Buffer.from(await response.arrayBuffer()),mime:response.headers.get('Content-Type')};},onDraft:async noteKey=>{await writeFile(resolve(dir,'note-draft.json'),JSON.stringify({noteKey,id:article.id,revision:article.revision,hash:article.hash}),{mode:0o600});await call('draft-linked',{id:article.id,lease:article.lease,noteKey});}});
     await page.screenshot({path:resolve(dir,'note-before-publish.png'),fullPage:true});await writeFile(resolve(dir,'note-prepared.json'),JSON.stringify(receipt,null,2),{mode:0o600});
     if(mode==='note-live'){publishing=true;const published=await publishPrepared(page,article,receipt,call);console.log('公開結果:',published.url);}
     else{await call('finish',{id:article.id,lease:article.lease,status:'prepared'});console.log('実noteの公開直前まで確認しました。公開していません。');}

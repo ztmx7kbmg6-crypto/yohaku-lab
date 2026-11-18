@@ -1,0 +1,15 @@
+import {chromium} from '@playwright/test';
+import {mkdir,writeFile} from 'node:fs/promises';
+import {resolve} from 'node:path';
+const directory=process.argv[2];if(!directory||!directory.includes('/.state/'))throw Error('非公開の.stateフォルダを指定してください');
+await mkdir(directory,{recursive:true,mode:0o700});
+const specfile=process.argv[3];if(!specfile||!specfile.includes('/.state/'))throw Error('非公開の図解仕様JSONを指定してください');
+const {readFile}=await import('node:fs/promises');
+const specs=JSON.parse(await readFile(specfile,'utf8'));
+if(!Array.isArray(specs)||!specs.every(s=>Array.isArray(s)&&s.length===5&&/^[a-z0-9-]+$/.test(s[0])&&typeof s[1]==='string'&&s[1].length<=35&&typeof s[2]==='string'&&s[2].length<=50&&Array.isArray(s[3])&&s[3].length===3&&s[3].every(t=>typeof t==='string'&&t.length<=14)&&Array.isArray(s[4])&&s[4].length===3&&s[4].every(t=>typeof t==='string'&&t.length<=22)))throw Error('図解仕様は key,見出し,補足,3つの手順,3つの説明の配列にしてください');
+const esc=s=>s.replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+const browser=await chromium.launch({channel:'chrome'});try{const page=await browser.newPage({viewport:{width:1200,height:630},deviceScaleFactor:1});
+ for(const [key,title,subtitle,steps,notes]of specs){await page.setContent(`<html lang="ja"><style>*{box-sizing:border-box}body{margin:0;background:#0c1629;color:#eff5ff;font-family:-apple-system,BlinkMacSystemFont,'Hiragino Sans',sans-serif}main{width:1200px;height:630px;padding:54px 66px;position:relative;background:radial-gradient(circle at 100% 0,#2d508055,transparent 55%)}small{letter-spacing:4px;color:#a8bfdc;font-size:13px}h1{font-size:43px;letter-spacing:1px;margin:28px 0 12px}p{color:#a7bddb;font-size:20px;margin:0}.flow{display:flex;gap:30px;margin-top:54px}.step{position:relative;flex:1;height:184px;background:#182b47;border:1px solid #476186;border-radius:15px;padding:22px}.step:not(:last-child):after{content:'→';position:absolute;right:-27px;top:65px;color:#96bdf2;font-size:26px}.num{font-size:13px;color:#8bb5f1;letter-spacing:2px}.name{font-size:23px;font-weight:600;margin:20px 0 12px;letter-spacing:0}.note{font-size:15px;color:#b0c3dd}.footer{position:absolute;bottom:31px;left:67px;right:67px;border-top:1px solid #3e506c;padding-top:15px;display:flex;justify-content:space-between;color:#8199ba;font-size:12px}</style><main><small>YOHAKU LAB / WORK NOTES</small><h1>${esc(title)}</h1><p>${esc(subtitle)}</p><div class="flow">${steps.map((s,i)=>`<div class="step"><div class="num">0${i+1}</div><div class="name">${esc(s)}</div><div class="note">${esc(notes[i])}</div></div>`).join('')}</div><div class="footer"><span>余白ラボ オリジナル図解</span><span>WORK WITH A LITTLE SPACE.</span></div></main></html>`);await page.screenshot({path:resolve(directory,key+'.png')});}
+ await writeFile(resolve(directory,'manifest.json'),JSON.stringify(specs.map(([key,title])=>({key,title,file:key+'.png',alt:title+'：'+specs.find(s=>s[0]===key)[3].join('、')})),null,2),{mode:0o600});console.log(specs.length+'枚のオリジナル図解を非公開フォルダに生成しました。');
+}finally{await browser.close()}

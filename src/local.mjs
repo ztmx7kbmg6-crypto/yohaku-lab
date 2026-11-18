@@ -7,6 +7,7 @@ import {api} from './api.mjs';
 import {Store} from './core.mjs';
 const dir=resolve(process.env.STATE_DIR||'.state/local');await mkdir(dir,{recursive:true,mode:0o700});await chmod(dir,0o700);
 const db=database(resolve(dir,'yohaku.sqlite'));db.raw.exec(await readFile('schema.sql','utf8'));
+if(!db.raw.prepare('PRAGMA table_info(articles)').all().some(c=>c.name==='images'))db.raw.exec(await readFile('media-schema.sql','utf8'));
 await chmod(resolve(dir,'yohaku.sqlite'),0o600);
 const port=Number(process.env.PORT||4173),base=`http://127.0.0.1:${port}`;
 const env={DB:db,LOCAL:true,UI_ORIGIN:base,MACHINE_TOKEN:process.env.MACHINE_TOKEN,VAPID_PUBLIC_KEY:process.env.VAPID_PUBLIC_KEY};
@@ -20,12 +21,12 @@ const server=createServer(async(req,res)=>{
  if(req.headers.host!==`127.0.0.1:${port}`){res.writeHead(403);return res.end('localhost only');}
  const url=new URL(req.url,base);
  if(url.pathname.startsWith('/api/')){
- const chunks=[];let size=0;for await(const c of req){size+=c.length;if(size>200000){res.writeHead(413);return res.end();}chunks.push(c)}
+ const chunks=[];let size=0;for await(const c of req){size+=c.length;if(size>(/^\/api\/(?:machine\/)?media$/.test(url.pathname)?1400000:200000)){res.writeHead(413);return res.end();}chunks.push(c)}
  const request=new Request(url,{method:req.method,headers:req.headers,...(req.method==='POST'?{body:Buffer.concat(chunks)}:{})});
  const response=await api(request,env);res.writeHead(response.status,Object.fromEntries(response.headers));return res.end(Buffer.from(await response.arrayBuffer()));
  }
  let name=url.pathname==='/'?'index.html':decodeURIComponent(url.pathname.slice(1));
  const path=resolve('public',name);if(!path.startsWith(resolve('public')+'/')){res.writeHead(403);return res.end();}
- const bytes=await readFile(path);res.writeHead(200,{'Content-Type':mime[extname(path)]||'application/octet-stream','Cache-Control':'no-cache','Content-Security-Policy':"default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'",'X-Content-Type-Options':'nosniff'});res.end(bytes);
+ const bytes=await readFile(path);res.writeHead(200,{'Content-Type':mime[extname(path)]||'application/octet-stream','Cache-Control':'no-cache','Content-Security-Policy':"default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'",'X-Content-Type-Options':'nosniff'});res.end(bytes);
  }catch{res.writeHead(404);res.end('Not found');}
 });server.listen(port,'127.0.0.1',()=>console.log(`余白ラボ ${base} — ローカル専用 / 本番公開は無効`));

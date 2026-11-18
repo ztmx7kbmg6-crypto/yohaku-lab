@@ -15,5 +15,4 @@ const text=result.output.filter(x=>x.type==='message').flatMap(x=>x.content).fil
 const articles=JSON.parse(text.replace(/^```(?:json)?\s*/,'').replace(/\s*```$/,''));
 if(!Array.isArray(articles)||articles.length!==3||articles.filter(a=>a.price===0).length!==1||articles.filter(a=>a.price===200).length!==2)throw Error('3本の構成が不正です');
 await writeFile(path,JSON.stringify({date,complete:false,stage:'generated',articles},null,2),{mode:0o600});
-const ids=[];for(const a of articles){if(typeof a.freeBody!=='string'||typeof a.paidBody!=='string'||(a.price===200&&!a.paidBody.trim()))throw Error('本文が不正です');const body=a.freeBody+(a.paidBody?'\n\n'+a.paidBody:'');const r=await fetch(base+'/api/machine/import',{method:'POST',headers:{Authorization:`Bearer ${process.env.MACHINE_TOKEN}`,'Content-Type':'application/json'},body:JSON.stringify({title:a.title,body,price:a.price,paywall:a.price?a.freeBody.length+2:0,tags:a.tags})});if(!r.ok)throw Error('取り込み失敗。控えとUIを照合してください');ids.push((await r.json()).id);await writeFile(path,JSON.stringify({date,complete:false,stage:'importing',articles,ids},null,2),{mode:0o600})}
-await writeFile(path,JSON.stringify({date,complete:true,ids},null,2),{mode:0o600});console.log('未承認の原稿を3本取り込みました。事実・品質の確認が必要です。');
+throw Error('本文は非公開の控えに保存しました。画像を最低1枚ずつ用意し、docs/IMAGES.mdに従って画像付きJSONをimport-batch.mjsで取り込んでください。画像なしでは自動取り込みしません。');
