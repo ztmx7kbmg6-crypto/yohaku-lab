@@ -51,6 +51,7 @@ export async function api(req,env){
  if(req.method==='POST'&&(path==='/api/media'||path==='/api/machine/media'))return wrap(json(await saveMedia(store,input)));
  if(req.method==='GET'&&!machine){
  if(path==='/api/state')result=await store.snapshot();
+ else if(path==='/api/availability')result=await store.availability({exclude:url.searchParams.get('exclude')});
  else if(/^\/api\/articles\/[^/]+$/.test(path))result=await store.detail(path.split('/').at(-1));
  else fail(404,'見つかりません');
  }else if(req.method==='POST'){

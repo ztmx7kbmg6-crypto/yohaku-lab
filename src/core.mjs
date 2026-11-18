@@ -1,3 +1,4 @@
+import {DAILY_LIMIT,MIN_GAP,ACTIVE_SQL,TIME_SQL,dayBounds,planTimes,dateAvailability} from './scheduling.mjs';
 
 export class Problem extends Error {constructor(message,status=400){super(message);this.status=status;}}
 const check=(ok,msg,status=400)=>{if(!ok)throw new Problem(msg,status)};
@@ -48,40 +49,39 @@ export class Store {
  const rows=await this.all(`UPDATE articles SET status=?,approved_hash=CASE WHEN ?='approved' THEN hash ELSE NULL END,approved_revision=CASE WHEN ?='approved' THEN revision ELSE NULL END,scheduled_at=NULL,actor='owner',updated_at=? WHERE id=? AND revision=? AND hash=? AND status IN('draft','revision_requested','rejected','approved','scheduled','prepared','failed') RETURNING id`,[input.decision,input.decision,input.decision,now(),id,input.revision,input.hash]);
  check(rows.length,'最終版が変わりました。再読み込みして確認してください',409);return this.get(id);
  }
- async schedule(input,clock=new Date()){
- check(/^\d{4}-\d{2}-\d{2}$/.test(input.date),'日付を指定してください');
- check(Array.isArray(input.ids)&&input.ids.length===3&&new Set(input.ids).size===3,'3記事を選んでください');
- const rows=await Promise.all(input.ids.map(id=>this.get(id)));
- check(rows.every(a=>a.status==='approved'&&a.approved_hash===a.hash),'最終版の承認済み記事が3本必要です',409);
- for(const a of rows)await this.checkMedia(await content(storedContent(a)),true);
- check(rows.filter(a=>a.price===0).length===1,'無料1本・200円2本を選んでください');
- rows.sort((a,b)=>a.price-b.price||a.id.localeCompare(b.id));
- const windows=[[10,12],[15,18],[19,22]],times=[]; for (const [start,end] of windows){
- const base=new Date(`${input.date}T${String(start).padStart(2,'0')}:00:00+09:00`);
- check(Number.isFinite(+base)&&base.toLocaleDateString('sv-SE',{timeZone:'Asia/Tokyo'})===input.date,'日付が不正です');
- const earliest=Math.max(+base,+clock+60000,times.length?+times.at(-1)+7200000:0),latest=+base+(end-start)*3600000;
- check(earliest<latest,'当日の時間枠が過ぎています。翌日以降を指定してください');
- const n=crypto.getRandomValues(new Uint32Array(1))[0]/4294967296;times.push(new Date(earliest+n*(latest-earliest)));}
- check(times.every((t,i)=>!i||t-times[i-1]>=7200000),'2時間の間隔を確保できません。翌日を指定してください');
- // A single SQL statement is the commit boundary: if any revision changed, nothing is scheduled.
- const clauses=rows.map(()=>'(id=? AND revision=? AND hash=? AND status=\'approved\')').join(' OR ');
- const conditions=rows.flatMap(a=>[a.id,a.revision,a.hash]);
- const dayStart=new Date(input.date+'T00:00:00+09:00').toISOString(),dayEnd=new Date(new Date(dayStart).getTime()+86400000).toISOString();
- const changed=await this.all(`UPDATE articles SET scheduled_at=CASE id ${rows.map(()=> 'WHEN ? THEN ?').join(' ')} END,status='scheduled',actor='owner',updated_at=? WHERE id IN(?,?,?) AND (SELECT COUNT(*) FROM articles WHERE ${clauses})=3 AND NOT EXISTS(SELECT 1 FROM articles WHERE scheduled_at>=? AND scheduled_at<? AND status IN('scheduled','preparing','prepared','published')) RETURNING id`,[...rows.flatMap((a,i)=>[a.id,times[i].toISOString()]),now(),...rows.map(a=>a.id),...conditions,dayStart,dayEnd]);
- check(changed.length===3,'承認状態が変わりました。予約は作成されませんでした',409);return this.snapshot();
+ async reservations(exclude=[]){const ids=Array.isArray(exclude)?exclude:[];return this.all(`SELECT id,${TIME_SQL} AS at FROM articles WHERE ${ACTIVE_SQL} ${ids.length?'AND id NOT IN('+ids.map(()=>'?').join(',')+')':''}` ,ids);}
+ async availability(input={},clock=new Date()){
+  let exclude=[];if(input.exclude){const a=await this.get(input.exclude);check(a.status==='scheduled','予約済みの記事だけ予定日を変更できます',409);exclude=[a.id];}
+  const busy=await this.reservations(exclude),today=clock.toLocaleDateString('sv-SE',{timeZone:'Asia/Tokyo'}),start=new Date(today+'T00:00:00+09:00');
+  return {days:Array.from({length:60},(_,i)=>dateAvailability(new Date(+start+i*86400000).toLocaleDateString('sv-SE',{timeZone:'Asia/Tokyo'}),busy,clock)),limit:DAILY_LIMIT};
  }
- async reschedule(id,input){
- const t=new Date(input.at);check(Number.isFinite(+t)&&t>new Date(),'未来の日時を指定してください');
- const hour=Number(t.toLocaleString('en-US',{timeZone:'Asia/Tokyo',hour:'numeric',hour12:false}));check(hour>=10&&hour<22,'JST 10〜22時を指定してください');
- const r=await this.all(`UPDATE articles SET scheduled_at=?,actor='owner',updated_at=? WHERE id=? AND revision=? AND status='scheduled' AND approved_hash=hash AND NOT EXISTS(SELECT 1 FROM articles WHERE id<>? AND status IN('scheduled','preparing','prepared') AND ABS(julianday(scheduled_at)-julianday(?))*24<2) RETURNING id`,[t.toISOString(),now(),id,input.revision,id,t.toISOString()]);check(r.length,'予約変更できません。承認・間隔を確認してください',409);return this.get(id);
+ async reserve(rows,date,expectedStatus,clock=new Date()){
+  const bounds=dayBounds(date);check(bounds,'日付を指定してください');const ids=rows.map(a=>a.id),busy=await this.reservations(ids);
+  const used=busy.filter(r=>r.at&&r.at>=bounds.start&&r.at<bounds.end).length;check(used+rows.length<=DAILY_LIMIT,'この日は公開済み・予約済みを合わせて3本までです。別の日を選んでください',409);
+  const times=planTimes(date,rows.length,busy,clock);check(times,'選択した本数を予約できる時間枠がありません。別の日か少ない本数を選んでください');
+  const targets=rows.map(()=>'(id=? AND revision=? AND hash=? AND status=? AND approved_hash=hash AND approved_revision=revision)').join(' OR '),placeholders=ids.map(()=>'?').join(',');
+  const conflicts=times.map(()=>`((${TIME_SQL}>=? AND ${TIME_SQL}<?) OR ABS(CAST(ROUND((julianday(${TIME_SQL})-2440587.5)*86400000) AS INTEGER)-?)<${MIN_GAP})`).join(' OR ');
+  const sql=`WITH expected AS MATERIALIZED (SELECT id FROM articles WHERE ${targets}), guard AS MATERIALIZED (SELECT (SELECT COUNT(*) FROM expected)=? AND (SELECT COUNT(*) FROM articles WHERE ${ACTIVE_SQL} AND id NOT IN(${placeholders}) AND ${TIME_SQL}>=? AND ${TIME_SQL}<?)+?<=${DAILY_LIMIT} AND NOT EXISTS(SELECT 1 FROM articles WHERE ${ACTIVE_SQL} AND id NOT IN(${placeholders}) AND (${conflicts})) AS allowed) UPDATE articles SET scheduled_at=CASE id ${ids.map(()=> 'WHEN ? THEN ?').join(' ')} END,status='scheduled',error=NULL,actor='owner',updated_at=? WHERE id IN(SELECT id FROM expected) AND (SELECT allowed FROM guard)=1 RETURNING id`;
+  const args=[...rows.flatMap(a=>[a.id,a.revision,a.hash,expectedStatus]),rows.length,...ids,bounds.start,bounds.end,rows.length,...ids,...times.flatMap(t=>[t.windowStart,t.windowEnd,t.ms]),...rows.flatMap((a,i)=>[a.id,times[i].at]),now()];
+  const changed=await this.all(sql,args);check(changed.length===rows.length,'承認状態または予定が変わりました。予約は作成されていません。再読み込みしてください',409);return this.snapshot();
+ }
+ async schedule(input,clock=new Date()){
+  check(dayBounds(input.date),'日付を指定してください');check(Array.isArray(input.ids)&&input.ids.length>=1&&input.ids.length<=3&&new Set(input.ids).size===input.ids.length,'1〜3記事を選んでください');
+  const rows=await Promise.all(input.ids.map(id=>this.get(id)));check(rows.every(a=>a.status==='approved'&&a.approved_hash===a.hash&&a.approved_revision===a.revision),'選んだ記事の最終版の承認が必要です',409);
+  for(const a of rows)await this.checkMedia(await content(storedContent(a)),true);rows.sort((a,b)=>a.price-b.price||a.id.localeCompare(b.id));return this.reserve(rows,input.date,'approved',clock);
+ }
+ async reschedule(id,input,clock=new Date()){
+  check(dayBounds(input.date),'時刻は自動で決定します。変更する予定日を選んでください');const a=await this.get(id);check(a.status==='scheduled'&&a.revision===input.revision&&a.approved_hash===a.hash&&a.approved_revision===a.revision,'予約または最終版の承認状態が変わりました',409);
+  await this.checkMedia(await content(storedContent(a)),true);await this.reserve([a],input.date,'scheduled',clock);return this.get(id);
  }
  async cancel(id){const r=await this.all(`UPDATE articles SET status='approved',scheduled_at=NULL,actor='owner',updated_at=? WHERE id=? AND status='scheduled' RETURNING id`,[now(),id]);check(r.length,'予約を停止できません。処理状態を確認してください',409);return this.get(id);}
  async retryable(id){return !!await this.one(`SELECT a.id FROM articles a JOIN publication_permissions p ON p.article_id=a.id AND p.revision=a.revision AND p.hash=a.hash WHERE a.id=? AND a.status='failed' AND a.approved_hash=a.hash AND a.approved_revision=a.revision AND a.public_url IS NULL AND a.lease IS NULL AND json_array_length(a.images)>0 AND json_extract(a.cover,'$.id') IS NOT NULL AND NOT EXISTS(SELECT 1 FROM note_drafts WHERE article_id=a.id) AND NOT EXISTS(SELECT 1 FROM publication_attempts WHERE article_id=a.id) AND NOT EXISTS(SELECT 1 FROM publication_attempt_history WHERE article_id=a.id)`,[id]);}
  async retry(id,input){
  check(input.confirm===true,'承認した最終版を今すぐ投稿する明示確認が必要です');
  const a=await this.get(id);await this.checkMedia(await content(storedContent(a)),true);
+ const today=new Date().toLocaleDateString('sv-SE',{timeZone:'Asia/Tokyo'}),bounds=dayBounds(today);const active=await this.reservations([id]);check(active.filter(r=>r.at&&r.at>=bounds.start&&r.at<bounds.end).length<DAILY_LIMIT,'今日は3本の枠が埋まっています。別の日に予約してください',409);
  check(await this.retryable(id),'noteの処理履歴があるか、最終版の承認・公開許可が変わっています。再投稿せず確認してください',409);
- const rows=await this.all(`UPDATE articles SET status='scheduled',scheduled_at=?,error=NULL,actor='owner',updated_at=? WHERE id=? AND revision=? AND hash=? AND status='failed' AND approved_hash=hash AND approved_revision=revision AND public_url IS NULL AND lease IS NULL AND EXISTS(SELECT 1 FROM publication_permissions p WHERE p.article_id=articles.id AND p.hash=articles.hash AND p.revision=articles.revision) AND NOT EXISTS(SELECT 1 FROM note_drafts WHERE article_id=articles.id) AND NOT EXISTS(SELECT 1 FROM publication_attempts WHERE article_id=articles.id) AND NOT EXISTS(SELECT 1 FROM publication_attempt_history WHERE article_id=articles.id) RETURNING id`,[now(),now(),id,input.revision,input.hash]);
+ const rows=await this.all(`UPDATE articles SET status='scheduled',scheduled_at=?,error=NULL,actor='owner',updated_at=? WHERE id=? AND revision=? AND hash=? AND status='failed' AND approved_hash=hash AND approved_revision=revision AND public_url IS NULL AND lease IS NULL AND EXISTS(SELECT 1 FROM publication_permissions p WHERE p.article_id=articles.id AND p.hash=articles.hash AND p.revision=articles.revision) AND NOT EXISTS(SELECT 1 FROM note_drafts WHERE article_id=articles.id) AND NOT EXISTS(SELECT 1 FROM publication_attempts WHERE article_id=articles.id) AND NOT EXISTS(SELECT 1 FROM publication_attempt_history WHERE article_id=articles.id) AND (SELECT COUNT(*) FROM articles WHERE ${ACTIVE_SQL} AND ${TIME_SQL}>=? AND ${TIME_SQL}<?)<${DAILY_LIMIT} RETURNING id`,[now(),now(),id,input.revision,input.hash,bounds.start,bounds.end]);
  check(rows.length===1,'最終版または処理状態が変わりました。再投稿せず確認してください',409);
  await this.run("INSERT INTO audit(article_id,action,actor,revision,hash) VALUES(?,'retry_queued','owner',?,?)",[id,a.revision,a.hash]);return this.get(id);
  }
